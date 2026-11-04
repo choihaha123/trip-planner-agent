@@ -8,6 +8,20 @@ desktop.ini
 .idea/
 *.swp
 
+# Python virtual environment / cache
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Course reference code (참조용, 제출물 아님)
+ref/
+
+# Tool local state
+.ouroboros/
+.claude/worktrees/
+
 # Environment / secrets
 .env
 .env.*

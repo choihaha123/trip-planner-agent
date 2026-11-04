@@ -1,0 +1,29 @@
+# 근거: SERVICE.md / CLAUDE.md / OPEN_ISSUES.md (2026-11-04 기준)
+# 설치: pip install -r requirements.txt
+
+# 에이전트 코어 (CLAUDE.md 기술 스택)
+langchain>=1.4,<2                     # create_agent (langchain.agents) + 미들웨어
+langgraph>=1.2,<2                     # 에이전트 그래프
+langchain-aws>=1.9,<2                 # Amazon Bedrock ChatBedrockConverse
+
+# 웹 검색 (SERVICE.md 2.5, 승인됨)
+langchain-tavily>=0.2.18,<0.3
+
+# 대화 기록 영구 저장 (SERVICE.md 3.3, 승인됨)
+langgraph-checkpoint-sqlite>=3.1,<4
+
+# RAG (SERVICE.md 3.4, 승인됨)
+langchain-text-splitters>=1.1,<2      # 청킹
+langchain-chroma>=1.1,<2              # 영구 벡터DB (기본 KB / 사용자 수집 컬렉션)
+
+# 웹페이지 수집 (SERVICE.md 2.1, src/collector.py, 승인됨)
+langchain-community>=0.4.2,<0.5       # WebBaseLoader
+beautifulsoup4>=4.15,<5               # HTML 텍스트·제목 추출
+
+# 보조 (규칙 이행용)
+python-dotenv>=1.2,<2                 # .env 에서 API 키·설정 읽기 (CLAUDE.md 코드 규칙)
+tzdata>=2026.1                        # Windows에서 zoneinfo로 Asia/Seoul 시간대 사용 (SERVICE.md 2.4)
+
+# 미결 (OPEN_ISSUES.md 결정 후 추가)
+# - 날씨·환율 API 호출용 HTTP 클라이언트 (#5): requests·httpx 는 위 패키지에 딸려 설치됨. 직접 쓸 것을 정하면 명시
+# - 임베딩 모델 (#6): Bedrock Titan이면 langchain-aws 로 충분
