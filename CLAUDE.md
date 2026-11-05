@@ -18,24 +18,37 @@ main.py            CLI 진입점
 src/config.py      설정값·.env 읽기·로그 설정
 src/collector.py   웹페이지 수집·텍스트 추출
 src/middleware.py  URL 전처리 미들웨어 (URL 추출·관련도 판정·저장 흐름)
+src/tracing.py     실행 추적 미들웨어 (LLM·도구 호출 기록, TASKS Step 5)
+src/preprocess/build_kb.py  기본 KB 적재 스크립트 (data/kb → 벡터DB, TASKS Step 4)
+tests/test_budget.py        예산 계산 단위 테스트 (unittest, TASKS Step 6)
+tests/test_dates.py         날짜 계산 단위 테스트 (unittest, TASKS Step 7)
+evaluation/run_eval.py      평가 스크립트 (test_queries.csv 실행·판정, TASKS Step 11)
+evaluation/fixtures/        평가용 테스트 페이지 (inject.html: 간접 프롬프트 인젝션, 로컬 웹서버로 제공)
+evaluation/results/         평가 실행 결과 (케이스별 답변·도구·판정, Step 12 리포트 근거)
 requirements.txt   설치 패키지 목록
+.env.example       .env 작성 예시 (비밀 값 없음, TASKS Step 1)
 
 
 ## 참조 MD 파일
-- SERVICE.md    프로젝트 기획서. 무엇을 만드는지의 기준
+참조 문서는 모두 `docs/` 폴더에 있다. (CLAUDE.md, README.md만 루트에 둔다)
+- docs/SERVICE.md 프로젝트 기획서. 무엇을 만드는지의 기준
   - 모든 작업은 SERVICE.md 내용을 근거로 한다
   - 작업에 필요한데 SERVICE.md에 없거나 모호한 내용은 추측하지 말고 사용자에게 먼저 확인한다
   - 확인된 내용은 SERVICE.md에 반영해 기획서를 최신 상태로 유지한다
-- TASKS.md      단계별 작업 계획서. 프로젝트 진행 순서를 task 단위로 정리한다
+- docs/SPEC.md 구현 명세. SERVICE.md의 기능을 어떻게 구현하는지의 기준
+  - 1장은 공통 구조(파일 역할, 실행 구조, 데이터 모델, 설정값, 외부 구성요소), 2장은 기능별 구현이며 2장 번호는 SERVICE.md 2장과 같다
+  - 코드를 작성할 때는 해당 기능의 SERVICE.md 절과 SPEC.md 절을 함께 본다
+  - 기능이 바뀌면 SERVICE.md, 구현 방식이 바뀌면 SPEC.md에 반영한다. 두 문서가 어긋나면 SERVICE.md를 따르고 사용자에게 확인한다
+- docs/TASKS.md 단계별 작업 계획서. 프로젝트 진행 순서를 task 단위로 정리한다
   - 요청받은 task 하나만 수행하고, 다음 task로 넘어가지 않는다
   - task를 끝내면 TASKS.md에 완료 표시를 한다
-- EVALUATION.md 평가 기준. test_queries.csv 스키마, [setup] 표기, 카테고리 구성, 판정 원칙
+- docs/EVALUATION.md 평가 기준. test_queries.csv 스키마, [setup] 표기, 카테고리 구성, 판정 원칙
   - 평가 데이터·평가 스크립트 작업은 EVALUATION.md를 따른다
-- SCENARIOS.md  1차 완료 시나리오. 시연에서 반드시 동작해야 하는 시나리오 목록
+- docs/SCENARIOS.md 1차 완료 시나리오. 시연에서 반드시 동작해야 하는 시나리오 목록
   - 기능을 구현할 때 관련 시나리오가 동작하는지를 기준으로 삼는다
-- OPEN_ISSUES.md 미결 항목 목록
+- docs/OPEN_ISSUES.md 미결 항목 목록
   - 여기 있는 항목에 해당하는 작업은 추측하지 말고 사용자에게 먼저 확인한다
-  - 결정되면 관련 문서(SERVICE.md / EVALUATION.md / SCENARIOS.md)에 반영하고 OPEN_ISSUES.md에서 '결정됨'으로 옮긴다
+  - 결정되면 관련 문서(SERVICE.md / SPEC.md / EVALUATION.md / SCENARIOS.md)에 반영하고 OPEN_ISSUES.md에서 '결정됨'으로 옮긴다
 
 
 ## 코드 규칙

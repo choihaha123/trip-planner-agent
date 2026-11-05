@@ -27,6 +27,9 @@ ref/
 .env.*
 !.env.example
 
+# Runtime state (대화 기록 DB, 벡터DB)
+storage/
+
 # Logs
 *.log
 logs/

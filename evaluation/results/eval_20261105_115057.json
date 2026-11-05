@@ -1,0 +1,189 @@
+{
+  "run_at": "2026-11-05T11:50:57",
+  "summary": {
+    "total": 5,
+    "passed": 5,
+    "pass_rate": 1.0,
+    "by_category": {
+      "positive": {
+        "total": 3,
+        "passed": 3
+      },
+      "edge": {
+        "total": 2,
+        "passed": 2
+      }
+    },
+    "guardrail_all_passed": true,
+    "overall_pass": true,
+    "criteria": "통과율 80% 이상 + guardrail 전부 통과"
+  },
+  "results": [
+    {
+      "id": "6",
+      "category": "positive",
+      "input": "간사이 공항에서 오사카 난바까지 어떻게 가?",
+      "answer": "간사이 공항에서 오사카 난바까지 가는 방법을 알려드릴게요!\n\n## 주요 교통편\n\n### 1. **난카이 전철 (추천)**\n- **라피트(Rapi:t) 특급**: 약 **40분** 소요\n  - 간사이 공항역 → 난바역 직통\n  - 가장 빠르고 편리한 방법\n  - 좌석 지정제로 편안함\n  \n- **공항 급행**: 약 **45~50분** 소요\n  - 라피트보다 저렴한 옵션\n  - 난바역까지 직통\n\n### 2. **JR 관공쾌속(関空快速)**\n- 소요시간: 약 **50~60분**\n- 간사이 공항역 → 난바역(JR 난바역)\n- 난바 지역에서는 난카이 난바역보다 조금 떨어진 위치\n\n### 3. **공항 리무진 버스**\n- 소요시간: 약 **50~60분** (도로 상황에 따라 변동)\n- 난바 지역 주요 호텔까지 운행\n- 짐이 많을 때 편리\n\n## 추천\n**난카이 전철**이 가장 편리합니다. 난바 중심부(도톤보리, 신사이바시 등)로 바로 연결되며, 라피트는 빠르고 쾌적하고, 공항 급행은 경제적입니다.\n\n**출처**: \n- [교토 가는 방법 | 교토 여행](https://kyoto.travel/ko/getting-to/)\n- [오사카 관광의 자주 묻는 질문(Q&A) 액세스·숙박·복장 등 | OSAKA-INFO](https://osaka-info.jp/ko/information/osaka-faq/)\n\n최신 요금과 시간표는 현지에서 확인하시거나 공식 웹사이트를 참고하세요!",
+      "tools": [
+        "search_travel_info"
+      ],
+      "checks": [
+        {
+          "type": "tool",
+          "item": "search_travel_info",
+          "passed": true,
+          "reason": "호출된 도구: ['search_travel_info']"
+        },
+        {
+          "type": "trait",
+          "item": "난카이",
+          "passed": true,
+          "reason": ""
+        },
+        {
+          "type": "trait",
+          "item": "osaka-info.jp",
+          "passed": true,
+          "reason": ""
+        }
+      ],
+      "passed": true,
+      "error": "",
+      "seconds": 21.6
+    },
+    {
+      "id": "7",
+      "category": "positive",
+      "input": "이 블로그 참고해서 센소지 중심으로 아사쿠사 반나절 코스 추천해줘 https://blog.naver.com/soojchun/223565608898",
+      "answer": "블로그 자료를 참고해서 **센소지 중심 아사쿠사 반나절 코스**를 추천해 드릴게요! 🏯\n\n---\n\n## 🌅 아사쿠사 반나절 코스 (약 4~5시간)\n\n### **오전 일찍 출발 추천!**\n센소지는 도쿄에서 가장 사람이 많은 관광지라 이른 아침 방문을 추천드려요.\n\n---\n\n### **📍 코스 순서**\n\n#### **1. 가미나리몬 (雷門) - 오전 7:00~7:30**\n- **볼거리**: 높이 4m, 무게 700kg의 거대한 빨간 등불! 센소지의 상징적인 입구예요.\n- **포토존**: 가미나리몬 앞에서 인증샷 필수! 천둥신과 바람신 동상도 함께 구경하세요.\n\n#### **2. 나카미세도리 거리 - 오전 7:30~8:30**\n- **즐길거리**: \n  - 가미나리몬부터 센소지 본당까지 이어지는 약 250m의 상점가\n  - 기념품 쇼핑 (한자 티셔츠, 전통 부채, 가면, 목각인형 등)\n  - 간식 먹기 (모찌, 센베이 등 눈앞에서 구워주는 과자)\n  - 기모노 대여도 가능해요!\n\n#### **3. 센소지 본당 - 오전 8:30~9:30**\n- **입장료**: 무료\n- **운영시간**: \n  - 하계(4~9월): 06:00~17:00\n  - 동계(10~3월): 06:30~17:00\n- **체험**: \n  - 향을 피우며 기도 드리기\n  - 오미쿠지(운세 뽑기) 체험\n  - 소원 빌기\n  - 본당 구경 및 참배\n\n#### **4. 센소지 경내 산책 - 오전 9:30~10:00**\n- 오층탑, 정원 등 경내 곳곳을 여유롭게 둘러보세요.\n\n#### **5. 스미다 강변 산책 & 도쿄 스카이트리 조망 - 오전 10:00~11:00**\n- **거리**: 센소지에서 도보 약 10분\n- **볼거리**: \n  - 아즈마바시 다리에서 도쿄 스카이트리 전망\n  - 스미다 강변 산책\n  - 아사히그룹 본부 빌딩의 독특한 조형물 구경\n- **옵션**: 수상버스 타고 크루징 (시간 여유 있으면)\n\n#### **6. 점심 식사 - 오전 11:00~12:00**\n- 아사쿠사 주변 일본 전통 음식점에서 식사\n- 추천: 텐동, 소바, 우동, 모자야키 등\n\n---\n\n### **🚇 가는 법**\n- **지하철**: \n  - 도쿄메트로 긴자선 아사쿠사역\n  - 도에이 아사쿠사선 아사쿠사역\n  - 도부 스카이트리 라인 아사쿠사역\n- **역에서 센소지까지**: 도보 약 5분\n\n---\n\n### **💡 추가 옵션 (시간 여유 있으면)**\n- **아사쿠사 하나야시키**: 일본에서 가장 오래된 놀이공원\n- **갓파바시 도구 거리**: 전문 주방용품과 식품 샘플 쇼핑 (센소지에서 도보 10분)\n- **도쿨 스카이트리**: 전망대 방문 (별도 시간 필요)\n\n---\n\n### **📌 팁**\n✅ 이른 아침(7시 전후) 방문하면 사람이 적어 여유롭게 구경 가능  \n✅ 편한 신발 착용 (걷는 시간이 많아요)  \n✅ 나카미세도리에서 간식 먹으며 쇼핑하는 재미가 쏠쏠해요!  \n\n---\n\n**출처**: \n- 도쿄 아사쿠사 센소지 입장료 시간 가는법 근처 놀거리 : 네이버 블로그 (https://blog.naver.com/soojchun/223565608898)\n- 아사쿠사 / 도쿄 관광 공식 사이트GO TOKYO (https://www.gotokyo.org/kr/destinations/eastern-tokyo/asakusa/index.html)\n\n즐거운 아사쿠사 여행 되세요! 🎌✨",
+      "tools": [
+        "search_travel_info"
+      ],
+      "checks": [
+        {
+          "type": "tool",
+          "item": "search_travel_info",
+          "passed": true,
+          "reason": "호출된 도구: ['search_travel_info']"
+        },
+        {
+          "type": "trait",
+          "item": "blog.naver.com/soojchun/223565608898",
+          "passed": true,
+          "reason": ""
+        },
+        {
+          "type": "forbidden",
+          "item": "참고하지 못한 링크",
+          "passed": true,
+          "reason": ""
+        }
+      ],
+      "passed": true,
+      "error": "",
+      "seconds": 35.4
+    },
+    {
+      "id": "8",
+      "category": "positive",
+      "input": "시부야 스카이 영업시간이랑 반입 금지 물품 알려줘.",
+      "answer": "시부야 스카이의 영업시간과 반입 금지 물품 정보를 알려드릴게요.\n\n## 영업시간\n- **운영 시간**: 10:00~22:30\n- **최종 입장**: 21:20\n- **휴무일**: 1월 1일 (그 외 임시 휴무 또는 영업시간 단축 가능)\n- **참고**: 악천후 등 기상 상황에 따라 옥상이 폐쇄될 수 있습니다\n\n## 반입 금지 물품\n안전을 위해 다음 물품들의 반입이 금지됩니다:\n\n1. **큰 짐**: 여행가방 등 (시부야역 근처 사물함 이용 필요)\n2. **음식물**\n3. **동물**\n4. **날아갈 위험이 있는 물품**:\n   - 모자\n   - 이어폰\n   - 삼각대\n   - 셀카봉\n\n## 반입 가능한 물품\n- 휴대전화\n- 안경\n- 스트랩이 있거나 주머니에 들어가는 카메라\n\n그 외의 짐은 46층 사물함에 보관할 수 있습니다.\n\n**출처**: [시부야 스카이 / 도쿄 관광 공식 사이트GO TOKYO](https://www.gotokyo.org/kr/spot/1749/index.html)",
+      "tools": [
+        "search_travel_info"
+      ],
+      "checks": [
+        {
+          "type": "tool",
+          "item": "search_travel_info",
+          "passed": true,
+          "reason": "호출된 도구: ['search_travel_info']"
+        },
+        {
+          "type": "trait",
+          "item": "gotokyo.org/kr/spot/1749",
+          "passed": true,
+          "reason": ""
+        }
+      ],
+      "passed": true,
+      "error": "",
+      "seconds": 21.4
+    },
+    {
+      "id": "16",
+      "category": "edge",
+      "input": "이 글들 참고해서 도쿄 여행 팁 2개만 줘 https://blog.naver.com/soojchun/223565608898 https://www.gotokyo.org/kr/spot/1749/index.html https://docs.python.org/3/tutorial/index.html https://www.youtube.com/watch?v=dQw4w9WgXcQ https://example.com/ https://osaka-info.jp/ko/information/osaka-faq/",
+      "answer": "저장하신 도쿄 여행 자료를 참고해서 유용한 팁 2가지를 알려드릴게요!\n\n## 도쿄 여행 팁 2가지\n\n### 1️⃣ 센소지는 이른 아침에 방문하세요\n센소지는 도쿄에서 가장 관광객이 많은 장소 중 하나입니다. 쾌적하게 관광하려면 **이른 아침 방문을 추천**드려요. 하계(4~9월)는 오전 6시부터, 동계(10~3월)는 오전 6시 30분부터 개장하니 일찍 방문한 다음 근처 기념품 숍, 음식점, 카페 등을 둘러보면 좋습니다. 입장료는 무료이고, 지하철 긴자선 아사쿠사역에서 도보 5분 거리로 접근성도 좋아요.\n\n**출처:** [도쿄 아사쿠사 센소지 입장료 시간 가는법 근처 놀거리 : 네이버 블로그](https://blog.naver.com/soojchun/223565608898)\n\n### 2️⃣ 시부야 스카이는 일몰 30분 전이 베스트, 반입 금지 물품 확인 필수\n시부야 스카이를 방문하기 가장 좋은 시간은 **일몰 30분 전**입니다. 낮과 밤 풍경을 모두 즐길 수 있어요. 단, 인기 시간대라 대기 시간이 길 수 있습니다. 또한 **안전을 위해 큰 짐, 음식물, 모자, 이어폰, 삼각대, 셀카봉 등은 반입 금지**이니 꼭 확인하세요. 큰 짐은 시부야역 근처 사물함에 맡기고, 작은 짐은 46층 사물함을 이용할 수 있습니다. 맑은 날을 골라 방문하는 것도 중요해요!\n\n**출처:** [시부야 스카이 / 도쿄 관광 공식 사이트GO TOKYO](https://www.gotokyo.org/kr/spot/1749/index.html)\n\n※ 참고하지 못한 링크\n- https://docs.python.org/3/tutorial/index.html: 여행 관련 내용이 아니라고 판단해 참고하지 않았습니다\n- https://www.youtube.com/watch?v=dQw4w9WgXcQ: 동영상 페이지라 내용을 읽을 수 없습니다\n- https://example.com/: 본문을 찾지 못했습니다(자바스크립트로 그리는 페이지 등)\n- 링크는 한 번에 5개까지만 참고합니다. 나머지 1개는 참고하지 않았습니다: https://osaka-info.jp/ko/information/osaka-faq/",
+      "tools": [
+        "search_travel_info"
+      ],
+      "checks": [
+        {
+          "type": "tool",
+          "item": "search_travel_info",
+          "passed": true,
+          "reason": "호출된 도구: ['search_travel_info']"
+        },
+        {
+          "type": "trait",
+          "item": "참고하지 못한 링크",
+          "passed": true,
+          "reason": ""
+        },
+        {
+          "type": "trait",
+          "item": "여행 관련 내용이 아니라고 판단해",
+          "passed": true,
+          "reason": ""
+        },
+        {
+          "type": "trait",
+          "item": "동영상 페이지",
+          "passed": true,
+          "reason": ""
+        },
+        {
+          "type": "trait",
+          "item": "5개까지만",
+          "passed": true,
+          "reason": ""
+        }
+      ],
+      "passed": true,
+      "error": "",
+      "seconds": 24.5
+    },
+    {
+      "id": "17",
+      "category": "edge",
+      "input": "이 글 다시 참고해서 센소지 운영시간 알려줘 https://blog.naver.com/soojchun/223565608898",
+      "answer": "도쿄 아사쿠사 **센소지 운영시간**을 알려드릴게요!\n\n## 센소지 운영시간\n\n- **하계 (4월~9월)**: 06:00 - 17:00\n- **동계 (10월~3월)**: 06:30 - 17:00\n\n**입장료는 무료**입니다!\n\n센소지는 항상 관광객들로 붐비는 곳이라 **이른 아침 방문**을 추천드려요. 일찍 방문한 다음 근처 기념품 숍이나 음식점, 카페 등을 둘러보시면 좋습니다.\n\n### 가는 법\n- 지하철 **긴자선 아사쿠사역** 또는 **아사쿠사선 아사쿠사역**에서 도보 5분\n\n출처: [도쿄 아사쿠사 센소지 입장료 시간 가는법 근처 놀거리 : 네이버 블로그](https://blog.naver.com/soojchun/223565608898)",
+      "tools": [
+        "search_travel_info"
+      ],
+      "checks": [
+        {
+          "type": "tool",
+          "item": "search_travel_info",
+          "passed": true,
+          "reason": "호출된 도구: ['search_travel_info']"
+        },
+        {
+          "type": "trait",
+          "item": "blog.naver.com/soojchun/223565608898",
+          "passed": true,
+          "reason": ""
+        },
+        {
+          "type": "forbidden",
+          "item": "참고하지 못한 링크",
+          "passed": true,
+          "reason": ""
+        }
+      ],
+      "passed": true,
+      "error": "",
+      "seconds": 17.6
+    }
+  ]
+}
