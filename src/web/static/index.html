@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>여행 플래너</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <!-- 로그인·회원가입 -->
+  <main id="auth-view" class="auth" hidden>
+    <form id="auth-form" class="auth-card" novalidate>
+      <h1 class="brand">여행 플래너</h1>
+      <p class="auth-sub" id="auth-sub">다시 오셨네요. 로그인하고 여행 계획을 이어가세요.</p>
+      <label for="auth-email">이메일</label>
+      <input id="auth-email" type="email" autocomplete="email" required>
+      <label for="auth-password">비밀번호</label>
+      <input id="auth-password" type="password" autocomplete="current-password" required>
+      <p class="hint" id="auth-hint" hidden>비밀번호는 8자 이상으로 정해 주세요.</p>
+      <p class="error" id="auth-error" role="alert" hidden></p>
+      <button class="primary" id="auth-submit" type="submit">로그인</button>
+      <button class="link" id="auth-toggle" type="button">처음이신가요? 회원가입</button>
+    </form>
+  </main>
+
+  <!-- 앱 -->
+  <div id="app-view" class="app" hidden>
+    <aside id="sidebar" class="sidebar">
+      <div class="side-top">
+        <div class="brand">여행 플래너</div>
+        <button id="new-thread" class="new-thread" type="button">새 대화</button>
+      </div>
+      <nav class="threads" aria-label="내 대화">
+        <ul id="thread-list"></ul>
+        <p id="thread-empty" class="muted small" hidden>아직 대화가 없어요.</p>
+      </nav>
+      <div class="side-bottom">
+        <span id="user-email" class="muted small"></span>
+        <button id="logout" class="link small" type="button">로그아웃</button>
+      </div>
+    </aside>
+    <div id="scrim" class="scrim" hidden></div>
+
+    <section class="chat-area">
+      <header class="topbar">
+        <button id="menu" class="icon-btn" type="button" aria-label="대화 목록 열기">☰</button>
+        <h2 id="thread-title" class="thread-title">새 대화</h2>
+        <button id="open-links" class="top-btn" type="button" aria-controls="links-panel" aria-expanded="false">저장한 링크</button>
+        <button id="open-memory" class="top-btn" type="button" aria-controls="memory-panel" aria-expanded="false">기억</button>
+      </header>
+
+      <div id="messages" class="messages" aria-live="polite">
+        <div id="welcome" class="welcome">
+          <p class="welcome-title">어디로 떠나볼까요?</p>
+          <p class="muted">일정, 예산, 날씨·환율, 여행지 질문을 도와드려요. 여행 글 링크를 붙여넣으면 저장해 두었다가 다음 대화에서도 근거로 씁니다.</p>
+          <div class="tickets">
+            <button class="ticket" type="button">오사카 3박4일, 1인 100만원으로 일정 짜줘</button>
+            <button class="ticket" type="button">다음 주 토요일 도쿄 날씨랑 엔화 환율 알려줘</button>
+            <button class="ticket" type="button">간사이 공항에서 난바까지 어떻게 가?</button>
+          </div>
+        </div>
+      </div>
+
+      <form id="composer" class="composer">
+        <textarea id="input" rows="1" placeholder="여행 질문이나 링크를 입력하세요" aria-label="메시지"></textarea>
+        <button id="send" class="primary" type="submit">보내기</button>
+      </form>
+    </section>
+
+    <!-- 링크 패널: 추가(대화와 같은 처리) · 처리 결과 · 목록 · 삭제 -->
+    <aside id="links-panel" class="panel" aria-labelledby="links-title" hidden>
+      <header class="panel-head">
+        <h3 id="links-title">저장한 링크</h3>
+        <button id="close-links" class="icon-btn" type="button" aria-label="저장한 링크 닫기">×</button>
+      </header>
+      <p class="muted small panel-sub">여행 글 링크를 저장해 두면 모든 대화에서 답변 근거로 씁니다. 대화창에 붙여넣은 링크도 여기에 모입니다.</p>
+      <form id="link-form" class="link-form">
+        <textarea id="link-input" rows="2" placeholder="https://… 여러 개는 줄을 바꿔 넣으세요" aria-label="저장할 링크"></textarea>
+        <button id="link-submit" class="primary" type="submit">저장</button>
+      </form>
+      <div id="link-result" aria-live="polite"></div>
+      <ul id="link-list" class="link-list"></ul>
+      <p id="link-empty" class="muted small" hidden>아직 저장한 링크가 없어요.</p>
+    </aside>
+
+    <!-- 기억 패널: 장기 기억 보기 · 항목 삭제 (CLI /memory · /forget-memory와 같음) -->
+    <aside id="memory-panel" class="panel" aria-labelledby="memory-title" tabindex="-1" hidden>
+      <header class="panel-head">
+        <h3 id="memory-title">기억</h3>
+        <button id="close-memory" class="icon-btn" type="button" aria-label="기억 닫기">×</button>
+      </header>
+      <p class="muted small panel-sub">대화에서 직접 말해 주신 이름·여행 선호·답변 스타일을 기억해 모든 대화에서 씁니다. 지우면 더 이상 쓰지 않아요.</p>
+      <div id="memory-result" aria-live="polite"></div>
+      <ul id="memory-list" class="memory-list"></ul>
+      <p id="memory-empty" class="muted small" hidden>아직 기억한 정보가 없어요. 대화에서 "내 이름은 민수야, 매운 건 못 먹어"처럼 말하면 기억해 둘게요.</p>
+    </aside>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -186,16 +186,34 @@ def delete_user_source(user_id: str, source_url: str) -> int:
     ids = _ids_where(store, _user_source_where(user_id, source_url))
     if ids:
         store.delete(ids=ids)
+    logger.info("사용자 페이지 삭제", extra={"event": "page_deleted", "data": {
+        "user_id": user_id, "source_url": source_url, "chunks": len(ids)}})
     return len(ids)
 
 
-def reset_user(user_id: str) -> int:
+def list_user_pages(user_id: str) -> list[dict]:
+    """user_id가 저장한 링크(페이지) 목록을 저장한 순서대로 돌려준다. 항목: source_url, title, collected_at. (SERVICE 2.1)
+    청크 단위로 저장돼 있으므로 source_url 하나당 한 항목으로 묶는다. 다른 사용자의 자료는 조회하지 않는다."""
+    user_id = _check_user_id(user_id)
+    found = get_store(config.USER_COLLECTION).get(where={"user_id": user_id}, include=["metadatas"])
+    pages = {}
+    for m in found["metadatas"]:
+        m = m or {}
+        pages.setdefault(m.get("source_url", ""), {"source_url": m.get("source_url", ""), "title": m.get("title", ""),
+                                                   "collected_at": m.get("collected_at", "")})
+    return sorted(pages.values(), key=lambda p: (p["collected_at"], p["source_url"]))
+
+
+def reset_user(user_id: str) -> tuple[int, int]:
     """user_id의 수집 데이터를 모두 지운다. 사용자 수집 컬렉션만 대상이라 기본 KB는 지워지지 않는다. (SPEC 2.7)
-    지운 청크 수를 돌려준다."""
+    (지운 링크(페이지) 수, 지운 청크 수)를 돌려준다. 사용자 안내에는 링크 수를 쓴다."""
     user_id = _check_user_id(user_id)
     store = get_store(config.USER_COLLECTION)
-    ids = _ids_where(store, {"user_id": user_id})
+    found = store.get(where={"user_id": user_id}, include=["metadatas"])
+    ids = found["ids"]
+    pages = len({(m or {}).get("source_url") for m in found["metadatas"]})
     if ids:
         store.delete(ids=ids)
-    logger.info("사용자 데이터 초기화", extra={"event": "user_reset", "data": {"user_id": user_id, "chunks": len(ids)}})
-    return len(ids)
+    logger.info("사용자 데이터 초기화", extra={"event": "user_reset", "data": {
+        "user_id": user_id, "pages": pages, "chunks": len(ids)}})
+    return pages, len(ids)

@@ -1,5 +1,6 @@
 # tools.py - 도메인 도구 (docs/SPEC.md 1.2)
 # 여행 정보 검색(RAG 먼저)·웹 검색 등 에이전트가 호출하는 도구를 둔다.
+import hashlib
 import logging
 import math
 import re
@@ -21,17 +22,33 @@ from src import config, retriever
 logger = logging.getLogger(__name__)
 
 
-def wrap_reference(i: int, title: str, url: str, body: str, collected_at: str = "") -> str:
-    """참고 자료 하나를 구분자 태그로 감싼다. 태그 안 본문은 데이터일 뿐이며, 인용에는 태그의 title·url을 쓴다. (SPEC 2.6, 2.8)"""
-    attrs = f'id="{i}" title="{title}" url="{url}"' + (f' collected_at="{collected_at}"' if collected_at else "")
+SOURCE_SAVED, SOURCE_KB, SOURCE_WEB = "saved", "kb", "web"  # 참고 자료 출처 구분: 사용자 저장 자료 / 기본 KB / 웹 검색
+
+
+def reference_id(url: str, i: int = 0) -> str:
+    """참고 자료의 출처 ID. URL에서 만든 짧은 값이라 몇 번째 검색이든 같은 문서는 같은 ID다(일정표는 출처를 이 ID로만 적는다).
+    URL이 없으면 순번으로 만든다."""
+    return "r" + hashlib.sha1(url.encode()).hexdigest()[:6] if url else f"n{i}"
+
+
+def wrap_reference(i: int, title: str, url: str, body: str, collected_at: str = "", source: str = "") -> str:
+    """참고 자료 하나를 구분자 태그로 감싼다. 태그 안 본문은 데이터일 뿐이며, 인용에는 태그의 title·url을 쓴다. (SPEC 2.6, 2.8)
+    id는 URL로 만든 출처 ID(reference_id), source는 출처 구분(saved·kb·web)이다."""
+    attrs = (f'id="{reference_id(url, i)}" title="{title}" url="{url}"' + (f' source="{source}"' if source else "")
+             + (f' collected_at="{collected_at}"' if collected_at else ""))
     return f"<reference {attrs}>\n{body}\n</reference>"
+
+
+def reference_source(doc) -> str:
+    """RAG 청크의 출처 구분을 돌려준다. 기본 KB 표시값(KB_USER_ID)이면 kb, 아니면 사용자 저장 자료(saved)."""
+    return SOURCE_KB if doc.metadata.get("user_id") == config.KB_USER_ID else SOURCE_SAVED
 
 
 def format_references(docs) -> str:
     """검색된 RAG 청크들을 구분자 태그로 감싼 참고 자료 문자열로 만든다."""
     return "\n\n".join(
         wrap_reference(i, d.metadata.get("title", ""), d.metadata.get("source_url", ""),
-                       d.page_content, d.metadata.get("collected_at", ""))
+                       d.page_content, d.metadata.get("collected_at", ""), reference_source(d))
         for i, d in enumerate(docs, 1)
     )
 
@@ -70,7 +87,8 @@ def run_web_search(query: str) -> str | None:
         return None
     if not results:
         return None
-    return "\n\n".join(wrap_reference(i, r["title"], r["url"], r["content"]) for i, r in enumerate(results, 1))
+    return "\n\n".join(wrap_reference(i, r["title"], r["url"], r["content"], source=SOURCE_WEB)
+                       for i, r in enumerate(results, 1))
 
 
 # ---------- 여행 정보 검색 (SPEC 2.5): RAG 먼저 → LLM 관련성 판정 → 없으면 웹 검색 ----------
@@ -130,9 +148,17 @@ def filter_relevant_chunks(query: str, docs: list) -> list:
     return kept
 
 
-def search_knowledge(query: str, user_id: str) -> list:
-    """지식베이스(기본 KB + 이 사용자의 저장 자료)를 검색하고 관련 있는 청크만 돌려준다."""
-    return filter_relevant_chunks(query, retriever.search(query, user_id))
+def search_knowledge(query: str, user_id: str) -> list | None:
+    """지식베이스(기본 KB + 이 사용자의 저장 자료)를 검색하고 관련 있는 청크만 돌려준다.
+    검색 자체가 실패하면(임베딩 권한·자격증명·네트워크·Chroma 오류 등) None을 돌려줘, 호출한 도구가 웹 검색으로 이어가게 한다.
+    예외를 도구 밖으로 내보내면 그 턴의 답변이 사라지고 대화 기록이 깨지기 때문이다. (SPEC 2.5)"""
+    try:
+        docs = retriever.search(query, user_id)
+    except Exception as e:
+        logger.warning("지식베이스 검색 실패(웹 검색으로 대체)", extra={"event": "rag_search_failed", "data": {
+            "query": query, "error": repr(e)[-200:]}})
+        return None
+    return filter_relevant_chunks(query, docs)
 
 
 def searched_knowledge_this_turn(messages) -> bool:
@@ -160,10 +186,12 @@ def search_travel_info(query: str, runtime: ToolRuntime[Any]) -> str:
     if kept:
         return ("[지식베이스·저장 자료 검색 결과] 부족하거나 최신 가격·영업시간이 더 필요하면 web_search로 보충할 수 있다.\n\n"
                 + format_references(kept))
+    # None = 검색 실패, [] = 관련 자료 없음. 둘 다 웹 검색으로 이어가되 머리말로 구분한다.
+    reason = "저장 자료·기본 자료를 확인하지 못해" if kept is None else "지식베이스에 관련 자료가 없어"
     web = run_web_search(query)
     if web is None:
-        return "지식베이스에 관련 자료가 없고 " + WEB_SEARCH_FAILED
-    return "[지식베이스에 관련 자료가 없어 웹 검색 결과를 가져왔다]\n\n" + web
+        return f"{reason} 웹 검색을 시도했으나 " + WEB_SEARCH_FAILED
+    return f"[{reason} 웹 검색 결과를 가져왔다]\n\n" + web
 
 
 @tool
@@ -178,7 +206,7 @@ def web_search(query: str, runtime: ToolRuntime[Any]) -> str:
     parts = []
     # 이번 턴에 지식베이스를 먼저 보지 않았으면 여기서 먼저 확인해, 사용자가 저장한 자료를 놓치지 않는다.
     if not searched_knowledge_this_turn(runtime.state.get("messages", [])):
-        kept = search_knowledge(query, runtime.context.user_id)
+        kept = search_knowledge(query, runtime.context.user_id)  # 검색 실패(None)면 웹 검색 결과만 쓴다.
         if kept:
             parts.append("[먼저 확인한 지식베이스·저장 자료]\n\n" + format_references(kept))
     web = run_web_search(query)
@@ -432,7 +460,7 @@ class BudgetItem(BaseModel):
                     "per_room_per_night=객실 1박(숙박), group=일행 1회, group_per_day=일행 1일(렌터카)")
     basis: Literal["user_input", "source", "llm_estimate"] = Field(
         description="금액 근거: user_input=사용자가 준 값, source=웹 검색 등 출처 있음, llm_estimate=출처를 못 찾은 추정치")
-    source: str = Field(default="", description="basis가 source면 '제목 + URL'")
+    source: str = Field(default="", description="basis가 source면 검색 결과 <reference>의 id (예: r3f9a1c). 제목·URL은 쓰지 않는다")
     day: int | None = Field(default=None, description="특정 일차에만 드는 비용이면 그 일차(1부터). 지정하면 그날 하루분으로 계산")
 
 
@@ -452,6 +480,12 @@ def item_multiplier(unit: str, people: int, nights: int, day_given: bool) -> int
         "group": 1,
         "group_per_day": days,
     }[unit]
+
+
+def needs_adjustments(judgement: dict | None) -> bool:
+    """예산 조정안을 꼭 넣어야 하는지: '초과'이고 초과 폭이 예산의 BUDGET_ADJUSTMENT_THRESHOLD(15%)를 넘을 때만. (SERVICE 2.3)"""
+    return bool(judgement and judgement["verdict"] == "over"
+                and judgement["diff"] > judgement["budget"] * config.BUDGET_ADJUSTMENT_THRESHOLD)
 
 
 def judge_budget(total_max: float, budget: float) -> tuple[str, float]:
@@ -575,8 +609,11 @@ def render_budget(result: dict, for_user: bool = False) -> str:
             line += f" (최대 {format_money(j['diff'], cur)} 넘을 수 있음, 허용폭 ±{config.BUDGET_TOLERANCE:.0%} 이내)"
         elif j["verdict"] == "over":
             line += f" — 최대 {format_money(j['diff'], cur)} 초과"
-            if not for_user:
-                line += ". 숙박 등급·일정 조정 등 조정안을 제시하세요."
+            if not for_user and needs_adjustments(j):
+                line += (f". 초과 폭이 {config.BUDGET_ADJUSTMENT_THRESHOLD:.0%}를 넘으므로 숙박 등급·일정 조정 등 조정안을 제시하세요"
+                         " (일정표면 render_itinerary의 adjustments에 넣는다).")
+            elif not for_user:
+                line += f". 초과 폭이 {config.BUDGET_ADJUSTMENT_THRESHOLD:.0%} 이내라 조정안 없이 진행해도 된다."
         lines.append(line)
     if result["excluded"] and not for_user:
         lines.append(f"계산에서 제외: {', '.join(result['excluded'])} — 출처 없는 추정 금액은 항공·숙박·식비·현지 교통만 "
@@ -588,8 +625,8 @@ def render_budget(result: dict, for_user: bool = False) -> str:
 
 
 @tool
-def calculate_budget(items: list[BudgetItem], people: int, nights: int, budget: float | None = None,
-                     budget_basis: Literal["total", "per_person"] = "total",
+def calculate_budget(items: list[BudgetItem], people: int, nights: int, runtime: ToolRuntime[Any],
+                     budget: float | None = None, budget_basis: Literal["total", "per_person"] = "total",
                      display_currency: str = config.BASE_CURRENCY) -> str:
     """여행 예산을 계산한다. 곱셈·합계·환율 환산·예산 판정은 모두 이 도구가 하므로 직접 계산하지 않는다.
     비용 항목마다 단위 1개당 금액 범위·통화·단위·근거를 넘긴다. 결과의 항목별·일자별 합계, 총액·1인당 금액,
@@ -603,6 +640,7 @@ def calculate_budget(items: list[BudgetItem], people: int, nights: int, budget: 
         budget_basis: 예산 기준. total=일행 총액, per_person=1인 기준
         display_currency: 결과를 표시할 통화 (기본 KRW, 예산 통화와 같게)
     """
+    items = resolve_budget_sources(items, reference_index(runtime.state.get("messages", [])))
     try:
         result = compute_budget(items, people, nights, budget, budget_basis, display_currency)
     except (BudgetError, ExchangeRateError) as e:
@@ -732,14 +770,27 @@ TRIP_ITEM_LABELS = {
     "origin": "출발지(어느 도시·공항)",
     "budget": "예산(금액)",
     "budget_basis": "예산 기준(1인당인지 일행 총액인지)",
+    # 취향 항목 (2026-11-05 추가, SERVICE 2.2): 필수는 아니지만 처음 한 번 함께 묻는다. 알면 검색 범위를 좁혀
+    # 시간·비용이 줄고 맞춤 일정이 된다. 답이 없으면 다시 묻지 않고 에이전트가 정한다.
+    "must_visit": "꼭 가고 싶은 곳이나 이미 정한 일정(예약한 숙소·공연 등)",
+    "pace": "여행 스타일(여유롭게 / 많이 보기)",
+    "interests": "관심사(음식·사찰·쇼핑·사진·자연 등)",
+}
+PREFERENCE_ITEMS = ("must_visit", "pace", "interests")
+# 취향을 물어봤는데 답이 없거나 사용자가 맡겼을 때의 가정
+PREFERENCE_ASSUMPTIONS = {
+    "must_visit": "꼭 갈 곳은 에이전트가 대표 명소로 정함",
+    "pace": "여행 스타일은 적당한 속도(하루 3~4곳)로 가정",
+    "interests": "관심사는 대표 관광·음식 위주로 가정",
 }
 ASKED_MARKER = "[물어본 항목:"  # 다음 호출에서 '이미 물어본 항목'을 찾기 위한 표시
 _ASKED_PATTERN = re.compile(r"\[물어본 항목: ([a-z_, ]*) \| 목적지: (.*)\]")
 
 
 def missing_trip_items(destination: str, nights: int | None, people: int | None, origin: str,
-                       budget: float | None, budget_basis: str) -> list[str]:
-    """일정에 필요한 항목 중 빠진 것을 순서대로 돌려준다. 예산 기준은 2명 이상이고 예산을 준 경우에만 필요하다."""
+                       budget: float | None, budget_basis: str, preferences: dict[str, str] | None = None) -> list[str]:
+    """일정에 필요한 항목 중 빠진 것을 순서대로 돌려준다. 예산 기준은 2명 이상이고 예산을 준 경우에만 필요하다.
+    preferences(취향 항목 → 값)를 주면 비어 있는 취향 항목도 뒤에 붙인다."""
     missing = []
     if not destination.strip():
         missing.append("destination")
@@ -753,6 +804,8 @@ def missing_trip_items(destination: str, nights: int | None, people: int | None,
         missing.append("budget")
     elif people is not None and people >= 2 and not budget_basis:
         missing.append("budget_basis")
+    if preferences is not None:
+        missing += [p for p in PREFERENCE_ITEMS if not (preferences.get(p) or "").strip()]
     return missing
 
 
@@ -780,14 +833,19 @@ def asked_items_from_messages(messages, destination: str) -> tuple[set[str], str
 
 
 def evaluate_trip_info(destination: str, nights: int | None, people: int | None, origin: str,
-                       budget: float | None, budget_basis: str, asked_before: set[str]) -> dict:
+                       budget: float | None, budget_basis: str, asked_before: set[str],
+                       preferences: dict[str, str] | None = None, delegate_preferences: bool = False) -> dict:
     """빠진 항목을 판정한다. 처음 빠진 항목은 되묻고(ask), 이미 물어봤는데도 빠진 항목은 가정을 적용한다.
+    취향 항목도 같은 규칙(처음 한 번 묻고, 답이 없으면 가정)이며, 사용자가 맡겼으면(delegate_preferences) 묻지 않고 가정한다.
     결과: {"status": "ask"|"ready", "ask": [항목…], "assumed": {항목: 가정 문구}, "confirmed": {항목: 값 문구}}"""
     if people is not None and people < 1:
         raise ValueError("인원은 1명 이상이어야 합니다.")
     if nights is not None and nights < 0:
         raise ValueError("박 수는 0 이상이어야 합니다.")
-    missing = missing_trip_items(destination, nights, people, origin, budget, budget_basis)
+    preferences = {p: (preferences or {}).get(p, "") or "" for p in PREFERENCE_ITEMS}
+    if delegate_preferences:  # 취향을 맡긴 경우: 물어본 것과 같이 다룬다(가정으로 진행)
+        asked_before = asked_before | set(PREFERENCE_ITEMS)
+    missing = missing_trip_items(destination, nights, people, origin, budget, budget_basis, preferences)
     to_ask = [m for m in missing if m not in asked_before]
 
     assumed = {}
@@ -805,6 +863,8 @@ def evaluate_trip_info(destination: str, nights: int | None, people: int | None,
             assumed["budget"] = "예산 없음 (예산 판정 생략, 예산은 가정하지 않음)"
         elif item == "budget_basis":
             assumed["budget_basis"] = "예산 기준 총액(일행 전체)"
+        elif item in PREFERENCE_ASSUMPTIONS:
+            assumed[item] = PREFERENCE_ASSUMPTIONS[item]
 
     confirmed = {}
     if destination.strip():
@@ -819,6 +879,9 @@ def evaluate_trip_info(destination: str, nights: int | None, people: int | None,
         confirmed["budget"] = f"예산 {budget:,.0f}"
         if budget_basis:
             confirmed["budget_basis"] = "예산 기준 " + ("1인당" if budget_basis == "per_person" else "총액")
+    for item, value in preferences.items():
+        if value.strip():
+            confirmed[item] = f"{TRIP_ITEM_LABELS[item].split('(')[0]}: {value.strip()}"
     # 이 대화에서 지금까지 물어본 항목(누적). 다음 호출에서 같은 항목을 다시 묻지 않는 기준이 된다.
     asked = [i for i in TRIP_ITEM_LABELS if i in asked_before or i in to_ask]
     return {"status": "ask" if to_ask else "ready", "ask": to_ask, "assumed": assumed, "confirmed": confirmed,
@@ -829,18 +892,26 @@ def render_trip_info(result: dict) -> str:
     """evaluate_trip_info 결과를 LLM이 따를 안내문으로 만든다. 물어본 항목은 표시로 남겨 다음 호출에서 읽는다."""
     lines = []
     if result["status"] == "ask":
-        labels = ", ".join(TRIP_ITEM_LABELS[i] for i in result["ask"])
-        lines += ["[확인 필요] 일정을 아직 만들지 말고, 아래 항목을 한 번에 묶어 사용자에게 물어보세요.",
-                  f"- 물어볼 항목: {labels}",
-                  "- 사용자가 답하면, 또는 모르겠다·알아서 해달라고 하면 check_trip_info를 다시 호출하세요. "
-                  "(다시 묻지 않고 가정으로 진행합니다)"]
+        required = [TRIP_ITEM_LABELS[i] for i in result["ask"] if i not in PREFERENCE_ITEMS]
+        optional = [TRIP_ITEM_LABELS[i] for i in result["ask"] if i in PREFERENCE_ITEMS]
+        lines.append("[확인 필요] 일정을 아직 만들지 말고, 아래 항목을 한 번에 묶어 사용자에게 물어보세요.")
+        if required:
+            lines.append(f"- 물어볼 항목: {', '.join(required)}")
+        if optional:
+            lines.append(f"- 맞춤 일정을 위한 취향 질문(필수 아님, '모르면 알아서 정할게요'라고 덧붙인다): {', '.join(optional)}. "
+                         "일정에 도움이 될 질문이 더 있으면 함께 물어도 된다.")
+        lines.append("- 사용자가 답하면, 또는 모르겠다·알아서 해달라고 하면 check_trip_info를 다시 호출하세요. "
+                     "(다시 묻지 않고 가정으로 진행합니다)")
     else:
-        lines.append("[확인 완료] 아래 조건으로 일정을 만드세요.")
+        lines.append("[확인 완료] 아래 조건으로 일정을 만드세요. 꼭 갈 곳·관심사가 있으면 그 중심으로 검색 범위를 좁힌다.")
     if result["confirmed"]:
         lines.append("- 확정 조건: " + ", ".join(result["confirmed"].values()))
-    if result["assumed"]:
-        lines.append("- 가정한 조건(render_itinerary의 assumptions에 넣어 맨 앞에 표시): "
-                     + ", ".join(result["assumed"].values()))
+    required_assumed = [v for k, v in result["assumed"].items() if k not in PREFERENCE_ITEMS]
+    preference_assumed = [v for k, v in result["assumed"].items() if k in PREFERENCE_ITEMS]
+    if required_assumed:
+        lines.append("- 가정한 조건(render_itinerary의 assumptions에 넣어 맨 앞에 표시): " + ", ".join(required_assumed))
+    if preference_assumed:
+        lines.append("- 취향은 에이전트가 정함(assumptions에 넣지 않아도 됨): " + ", ".join(preference_assumed))
     lines.append(f"{ASKED_MARKER} {', '.join(result['asked'])} | 목적지: {result['destination']}]")
     return "\n".join(lines)
 
@@ -848,8 +919,9 @@ def render_trip_info(result: dict) -> str:
 @tool
 def check_trip_info(runtime: ToolRuntime[Any], destination: str = "", nights: int | None = None,
                     people: int | None = None, origin: str = "", budget: float | None = None,
-                    budget_basis: Literal["", "total", "per_person"] = "") -> str:
-    """여행 일정을 만들기 전에 필요한 정보가 모두 있는지 확인한다. 일정표 요청이면 일정을 만들기 전에 반드시 먼저 호출한다.
+                    budget_basis: Literal["", "total", "per_person"] = "", must_visit: str = "", pace: str = "",
+                    interests: str = "", delegate_preferences: bool = False) -> str:
+    """여행 일정을 만들기 전에 필요한 정보와 취향이 있는지 확인한다. 일정표 요청이면 일정을 만들기 전에 반드시 먼저 호출한다.
     대화에서 사용자가 말한 값만 넣고, 말하지 않은 항목은 인자 자체를 넣지 않는다(추측하거나 빈 문자열 ""로 채우지 않는다).
     결과가 [확인 필요]면 일정을 만들지 말고 물어볼 항목을 한 번에 묻는다. [확인 완료]면 그 조건으로 일정을 만들고,
     가정한 조건이 있으면 답변 맨 앞에 표시한다.
@@ -861,13 +933,19 @@ def check_trip_info(runtime: ToolRuntime[Any], destination: str = "", nights: in
         origin: 출발지 (예: 인천, 김포, 부산)
         budget: 예산 금액 (원화 기준 숫자, 예: 100만원 → 1000000)
         budget_basis: 예산 기준. total=일행 총액, per_person=1인당. 사용자가 말하지 않았으면 비움
+        must_visit: 꼭 가고 싶은 곳·이미 정한 일정 (사용자가 말했거나 '없다'고 했을 때만, 예: 기요미즈데라, 없음)
+        pace: 여행 스타일 (사용자가 말했거나 장기 기억에 있을 때만, 예: 여유롭게)
+        interests: 관심사 (사용자가 말했거나 장기 기억에 있을 때만, 예: 맛집, 사찰)
+        delegate_preferences: 사용자가 취향·세부 계획은 알아서 하라고 했으면 true ('나머지는 알아서 해줘' 등)
     """
     asked_before, awaiting = asked_items_from_messages(runtime.state.get("messages", []), destination)
     if awaiting:  # 묻기 전에 다시 부른 경우: 가정으로 넘어가지 않고 같은 확인 요청을 돌려준다.
         return ("[확인 필요] 아직 사용자의 답을 받지 않았습니다. 이번 턴에는 다시 호출하지 말고, "
                 "앞서 안내한 항목을 사용자에게 물어보세요.\n" + awaiting.split("\n", 1)[1])
     try:
-        result = evaluate_trip_info(destination, nights, people, origin, budget, budget_basis, asked_before)
+        result = evaluate_trip_info(destination, nights, people, origin, budget, budget_basis, asked_before,
+                                    {"must_visit": must_visit, "pace": pace, "interests": interests},
+                                    delegate_preferences)
     except ValueError as e:
         return f"정보 확인 실패: {e} 값을 고쳐 다시 호출하세요."
     return render_trip_info(result)
@@ -957,12 +1035,60 @@ class SourceRef(BaseModel):
     url: str = Field(description="URL (검색 결과 <reference>의 url)")
 
 
+SOURCE_ID_HELP = "검색 결과 <reference>의 id (예: r3f9a1c). 제목·URL은 쓰지 않는다. 없으면 비움"
+_REFERENCE_TAG = re.compile(r"<reference ([^>]*)>")
+_TAG_ATTR = re.compile(r'(\w+)="([^"]*)"')
+
+
+def reference_index(messages: list) -> dict[str, SourceRef]:
+    """대화 기록의 도구 결과에 나온 <reference> 태그로 {출처 ID: 제목·URL}을 만든다(일정표·예산의 출처 ID를 풀 때 쓴다).
+    지난 턴 도구 결과가 정리돼 있어도, 출처를 적는 일정표·예산 도구는 같은 턴의 검색 결과를 쓰므로 찾을 수 있다."""
+    index = {}
+    for m in messages or []:
+        if getattr(m, "type", "") != "tool":
+            continue
+        for attrs in _REFERENCE_TAG.findall(str(m.content)):
+            a = dict(_TAG_ATTR.findall(attrs))
+            if a.get("id") and a.get("url"):
+                index.setdefault(a["id"], SourceRef(title=a.get("title", ""), url=a["url"]))
+    return index
+
+
+def resolve_source(value: str | None, index: dict[str, SourceRef]) -> SourceRef | None:
+    """출처 ID를 제목·URL로 바꾼다. 모델이 예전처럼 URL을 직접 쓴 경우도 받는다. 풀 수 없으면 None(출처 없음으로 처리)."""
+    value = (value or "").strip()
+    if not value:
+        return None
+    if value in index:
+        return index[value]
+    url = re.search(r"https?://\S+?(?=[)\s]|$)", value)
+    if url:
+        found = next((s for s in index.values() if s.url == url.group(0)), None)
+        return found or SourceRef(title=value.replace(url.group(0), "").strip(" ()") or url.group(0), url=url.group(0))
+    logger.info("알 수 없는 출처 ID", extra={"event": "unknown_source_id", "data": {"value": value[:40]}})
+    return None
+
+
+def resolve_budget_sources(items: list | None, index: dict[str, SourceRef]) -> list | None:
+    """예산 항목의 출처 ID를 '제목 URL'로 바꾼다. 풀 수 없는 출처 근거는 확인할 수 없으므로 LLM 추정치로 표시한다."""
+    if not items:
+        return items
+    resolved = []
+    for item in items:
+        if item.basis == "source":
+            src = resolve_source(item.source, index)
+            item = item.model_copy(update={"source": f"{src.title} {src.url}"} if src
+                                   else {"source": "", "basis": "llm_estimate"})
+        resolved.append(item)
+    return resolved
+
+
 class Admission(BaseModel):
     """관광지 입장료. 출처가 없으면 '출처 없음, 사용자 확인 필요'를 붙여 표시한다."""
     min_amount: float = Field(description="최소 금액")
     max_amount: float = Field(description="최대 금액 (값이 하나면 최소와 같게)")
     currency: str = Field(description="통화 코드 (예: JPY)")
-    source: SourceRef | None = Field(default=None, description="금액의 출처 (검색 결과의 제목·URL). 없으면 비움")
+    source: str = Field(default="", description=f"금액의 출처: {SOURCE_ID_HELP}")
 
 
 class ScheduleItem(BaseModel):
@@ -972,7 +1098,7 @@ class ScheduleItem(BaseModel):
     activity: str = Field(default="", description="할 일 한 줄 (입장료는 여기 말고 admission에 넣는다)")
     transport: str = Field(default="", description="이 장소로 가는 이동수단 (예: 난카이 전철)")
     travel_time: str = Field(default="", description="이동 소요시간 (예: 약 45분)")
-    source: SourceRef | None = Field(default=None, description="이 일정의 근거 출처")
+    source: str = Field(default="", description=f"이 일정의 근거 출처: {SOURCE_ID_HELP}")
     admission: Admission | None = Field(default=None, description="입장료 (출처가 확인된 경우만)")
 
 
@@ -984,13 +1110,15 @@ class DayPlan(BaseModel):
 
 def build_itinerary_text(title: str, destination: str, nights: int, people: int, origin: str, days: list[DayPlan],
                          start_date: str = "", assumptions: list[str] | None = None, notes: list[str] | None = None,
-                         extra_sources: list[SourceRef] | None = None, budget_result: dict | None = None,
-                         adjustments: list[str] | None = None) -> str:
-    """일정표 구조화 데이터를 검증하고 텍스트로 렌더링한다. 입력이 잘못되면 ValueError."""
+                         extra_sources: list[str] | None = None, budget_result: dict | None = None,
+                         adjustments: list[str] | None = None, source_index: dict[str, SourceRef] | None = None) -> str:
+    """일정표 구조화 데이터를 검증하고 텍스트로 렌더링한다. 입력이 잘못되면 ValueError.
+    출처는 출처 ID로 받아 source_index(대화 기록의 검색 결과)에서 제목·URL을 찾아 표시한다."""
+    source_index = source_index or {}
     if people < 1 or nights < 0:
         raise ValueError("인원은 1명 이상, 박 수는 0 이상이어야 합니다.")
     judgement = budget_result["judgement"] if budget_result else None
-    if judgement and judgement["verdict"] == "over" and not adjustments:  # 초과면 조정안 필수 (SERVICE 2.3)
+    if needs_adjustments(judgement) and not adjustments:  # 15% 넘게 초과면 조정안 필수 (SERVICE 2.3)
         cur = budget_result["currency"]
         raise ValueError(f"예산 초과(최대 {format_money(judgement['diff'], cur)} 초과)입니다. "
                          "adjustments에 숙박 등급·일정 조정 등 조정안을 넣어 다시 호출하세요.")
@@ -1016,8 +1144,9 @@ def build_itinerary_text(title: str, destination: str, nights: int, people: int,
         labeled += count
         return text
 
-    def cite(src: SourceRef | None) -> str:
-        """출처를 목록에 모으고 줄 끝 표기를 돌려준다."""
+    def cite(source_id: str | None) -> str:
+        """출처 ID를 제목·URL로 풀어 목록에 모으고 줄 끝 표기를 돌려준다. 풀 수 없으면 빈 문자열."""
+        src = resolve_source(source_id, source_index)
         if not src or not src.url:
             return ""
         sources.setdefault(src.url, src)
@@ -1044,8 +1173,9 @@ def build_itinerary_text(title: str, destination: str, nights: int, people: int,
                 a = it.admission
                 fee = "무료" if a.max_amount == 0 else format_range(a.min_amount, a.max_amount, normalize_currency(a.currency))
                 line += f"\n  입장료: {fee}"
-                if a.source and a.source.url:
-                    line += cite(a.source).replace("출처:", "입장료 출처:")
+                fee_source = cite(a.source)
+                if fee_source:
+                    line += fee_source.replace("출처:", "입장료 출처:")
                 else:
                     line += f" ({config.NO_SOURCE_LABEL})"
                     labeled += 1
@@ -1058,7 +1188,7 @@ def build_itinerary_text(title: str, destination: str, nights: int, people: int,
         lines += ["", "## 참고"] + [f"- {mark(n)}" for n in notes]
     if budget_result:
         lines += ["", "## 예산 요약", render_budget(budget_result, for_user=True)]
-        if judgement and judgement["verdict"] == "over":
+        if judgement and judgement["verdict"] == "over" and adjustments:  # 15% 이내 초과는 조정안 없이도 진행
             lines += ["", "## 예산 조정안"] + [f"- {mark(a)}" for a in adjustments]
     for src in extra_sources or []:
         cite(src)
@@ -1071,9 +1201,10 @@ def build_itinerary_text(title: str, destination: str, nights: int, people: int,
 
 @tool(response_format="content_and_artifact")
 def render_itinerary(title: str, destination: str, nights: int, people: int, origin: str, days: list[DayPlan],
-                     start_date: str = "", assumptions: list[str] | None = None, notes: list[str] | None = None,
-                     extra_sources: list[SourceRef] | None = None, budget_items: list[BudgetItem] | None = None,
-                     budget: float | None = None, budget_basis: Literal["total", "per_person"] = "total",
+                     runtime: ToolRuntime[Any], start_date: str = "", assumptions: list[str] | None = None,
+                     notes: list[str] | None = None, extra_sources: list[str] | None = None,
+                     budget_items: list[BudgetItem] | None = None, budget: float | None = None,
+                     budget_basis: Literal["total", "per_person"] = "total",
                      display_currency: str = config.BASE_CURRENCY, adjustments: list[str] | None = None):
     """완성한 여행 일정표를 구조화 데이터로 넘기면 검증·예산 계산·렌더링해 그대로 사용자에게 보여준다.
     일정표는 직접 글로 쓰지 말고 이 도구로만 보여준다. 결과가 그대로 최종 답변이 되므로, 호출 전에 검색·날짜·날씨 조회를 마친다.
@@ -1085,22 +1216,25 @@ def render_itinerary(title: str, destination: str, nights: int, people: int, ori
         nights: 박 수
         people: 인원 수
         origin: 출발지
-        days: 1일차부터 마지막 일차까지의 일정. 각 일정에 장소·이동수단·소요시간·근거 출처를 넣는다
+        days: 1일차부터 마지막 일차까지의 일정. 각 일정에 장소·이동수단·소요시간·근거 출처(검색 결과 id)를 넣는다
         start_date: 출발일 YYYY-MM-DD (resolve_dates로 구한 값, 모르면 비움)
         assumptions: check_trip_info의 가정한 조건 목록
         notes: 참고 사항 (가격은 출처가 있는 것만)
-        extra_sources: 일정 항목에 붙이지 못한 그 밖의 출처
+        extra_sources: 일정 항목에 붙이지 못한 그 밖의 출처의 검색 결과 id 목록
         budget_items: 비용 항목 (calculate_budget과 같은 형식). 넣으면 일차별 비용과 예산 요약을 함께 계산한다
         budget: 사용자가 말한 예산 (없으면 비움)
         budget_basis: 예산 기준 total=일행 총액, per_person=1인
         display_currency: 금액 표시 통화 (기본 KRW)
         adjustments: 예산 초과일 때의 조정안 (숙박 등급·일정 조정 등). 초과인데 비어 있으면 오류로 돌아온다
     """
+    # 출처는 ID로만 받고 파이썬이 대화 기록의 검색 결과에서 제목·URL을 채운다(출력 토큰 감소, URL 베껴 쓰기 오류 방지)
+    source_index = reference_index(runtime.state.get("messages", []))
+    budget_items = resolve_budget_sources(budget_items, source_index)
     try:
         budget_result = (compute_budget(budget_items, people, nights, budget, budget_basis, display_currency)
                          if budget_items else None)
         text = build_itinerary_text(title, destination, nights, people, origin, days, start_date,
-                                    assumptions, notes, extra_sources, budget_result, adjustments)
+                                    assumptions, notes, extra_sources, budget_result, adjustments, source_index)
     except (ValueError, BudgetError, ExchangeRateError) as e:
         logger.warning("일정표 렌더링 실패", extra={"event": "itinerary_failed", "data": {"error": str(e)}})
         raise ToolException(f"일정표 렌더링 실패: {e} 고쳐서 다시 호출하세요.") from e
@@ -1109,6 +1243,7 @@ def render_itinerary(title: str, destination: str, nights: int, people: int, ori
         "start_date": start_date, "assumptions": assumptions or [], "notes": notes or [],
         "adjustments": adjustments or [],
         "days": [d.model_dump() for d in days],
+        "sources": {k: v.model_dump() for k, v in source_index.items()},  # days 안 출처 ID → 제목·URL
         "budget": None if not budget_result else {
             "currency": budget_result["currency"], "group_total": budget_result["group_total"],
             "per_person": budget_result["per_person"], "daily": budget_result["daily"],

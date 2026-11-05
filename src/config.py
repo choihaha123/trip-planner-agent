@@ -12,27 +12,56 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
 # ---------- 모델 (Amazon Bedrock) ----------
+BEDROCK_REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1")  # 임베딩·판정 모델 등 리전을 따로 정하지 않은 호출의 리전
+# 답변(에이전트) 기본 모델과 그 리전. 리전은 임베딩과 따로 정한다(같은 모델도 리전별로 토큰 한도가 달라서).
+# 2026-11-05: 기존 기본 모델들이 일일 토큰 한도에 걸려 매번 대체 1순위(Sonnet 4.5 @us-west-2)가 답하던 것을 기본으로 올림
 BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-5-20250929-v1:0")
-BEDROCK_REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+BEDROCK_MODEL_REGION = os.getenv("BEDROCK_MODEL_REGION", "us-west-2")
 MODEL_TEMPERATURE = 0
 # 기본 모델이 토큰 한도(ThrottlingException)에 걸리면 순서대로 시도할 대체 모델. "모델ID@리전"을 쉼표로 구분.
 # 한도는 모델·리전·프로필 조합별이라, 같은 모델을 다른 리전/global 프로필로 먼저 시도한다.
+# 이전 기본 모델(Sonnet 4.6 global @us-east-1)은 한도에 자주 걸려 Haiku 바로 앞으로 둔다.
 BEDROCK_FALLBACK_MODELS = [
     item.strip() for item in os.getenv(
         "BEDROCK_FALLBACK_MODELS",
-        "us.anthropic.claude-sonnet-4-5-20250929-v1:0@us-west-2,"
         "global.anthropic.claude-sonnet-4-5-20250929-v1:0@us-east-1,"
         "global.anthropic.claude-sonnet-4-5-20250929-v1:0@ap-northeast-2,"
         "us.anthropic.claude-sonnet-4-6@us-east-1,"
+        "global.anthropic.claude-sonnet-4-6@us-east-1,"
         "us.anthropic.claude-haiku-4-5-20251001-v1:0@us-east-1",
     ).split(",") if item.strip()
 ]
-BEDROCK_MAX_RETRIES = int(os.getenv("BEDROCK_MAX_RETRIES", "1"))  # 모델 하나당 재시도 횟수 (넘으면 다음 모델로)
+BEDROCK_MAX_RETRIES = int(os.getenv("BEDROCK_MAX_RETRIES", "1"))  # 판정 모델(Haiku) 호출의 botocore 재시도 횟수
+# 답변(에이전트) 모델 호출: 일정표처럼 출력이 길면 생성에 60초(botocore 기본 응답 대기 한도)를 넘기므로 한도를 늘리고,
+# botocore 재시도는 하지 않는다(시간 초과를 같은 모델로 다시 기다리면 대기만 두 배가 된다. 한도 초과는 대체 모델 미들웨어가 처리).
+# 2026-11-05: 5박 일정표 생성이 60초를 넘어 시간 초과 → 재시도로 121.5초 뒤 실패한 사례로 추가.
+BEDROCK_READ_TIMEOUT = int(os.getenv("BEDROCK_READ_TIMEOUT", "180"))         # 응답 대기 한도(초)
+BEDROCK_AGENT_MAX_RETRIES = int(os.getenv("BEDROCK_AGENT_MAX_RETRIES", "0"))  # 답변 모델 botocore 재시도 횟수
+# 일정표 요청에서 검색 도구를 부르는 모델 호출(라운드) 상한. 넘으면 다음 호출은 일정표 작성(render_itinerary)으로 강제한다.
+# 2026-11-05: 모델이 검색을 3~4라운드로 나눠 라운드마다 약 10초씩 늘던 사례로 추가(응답 속도 개선 C).
+ITINERARY_MAX_SEARCH_ROUNDS = int(os.getenv("ITINERARY_MAX_SEARCH_ROUNDS", "2"))
 
 # ---------- 사용자·대화 기록 (SPEC 1.3, 2.7) ----------
 DEFAULT_USER_ID = "default"
 RESERVED_USER_PREFIX = "__"    # 시스템 예약 user_id 접두어 (예: 기본 KB "__kb__")
 CHECKPOINT_DB = PROJECT_ROOT / os.getenv("CHECKPOINT_DB", "storage/checkpoints.sqlite")
+
+# ---------- 장기 기억 (SERVICE 2.9, SPEC 2.9) ----------
+MEMORY_DB = PROJECT_ROOT / os.getenv("MEMORY_DB", "storage/memory.sqlite")  # user_id별 기억 저장소(SqliteStore)
+# 기억할 항목: 키 → 사용자에게 보여 줄 이름. 항목을 바꾸면 추출·표시·삭제 명령이 모두 이 목록을 따른다.
+MEMORY_FIELDS = {"name": "이름·호칭", "preferences": "여행 선호", "answer_style": "답변 스타일"}
+MEMORY_VALUE_MAX_CHARS = 200  # 항목 하나에 저장할 최대 글자 수 (넘으면 앞부분만)
+
+# ---------- 웹 (SERVICE 2.10, SPEC 2.10) ----------
+WEB_DB = PROJECT_ROOT / os.getenv("WEB_DB", "storage/web.sqlite")  # 계정·세션·대화 목록
+WEB_SESSION_DAYS = int(os.getenv("WEB_SESSION_DAYS", "14"))       # 로그인 유지 기간(일)
+WEB_SESSION_COOKIE = "session"                                     # 세션 토큰 쿠키 이름 (HttpOnly)
+WEB_COOKIE_SECURE = os.getenv("WEB_COOKIE_SECURE", "false").lower() == "true"  # HTTPS로 배포하면 true
+PASSWORD_MIN_LENGTH = int(os.getenv("PASSWORD_MIN_LENGTH", "8"))
+PASSWORD_SCRYPT = {"n": 2**14, "r": 8, "p": 1}  # hashlib.scrypt 비용 인자 (표준 라이브러리, 메모리 약 16MB)
+WEB_MESSAGE_MAX_CHARS = int(os.getenv("WEB_MESSAGE_MAX_CHARS", "4000"))  # 웹 메시지 한 번의 최대 글자 수
+WEB_TITLE_MAX_CHARS = 30       # 대화 제목(첫 질문 앞부분) 최대 글자 수
+WEB_AGENT_WAIT_SECONDS = 5     # 다른 요청이 에이전트를 쓰는 중일 때 '대기 중' 안내를 다시 보내는 간격(초)
 
 # ---------- RAG 저장소 (SPEC 1.4, 2.7) ----------
 EMBEDDING_MODEL_ID = os.getenv("EMBEDDING_MODEL_ID", "amazon.titan-embed-text-v2:0")
@@ -57,6 +86,9 @@ TIMEZONE = os.getenv("APP_TIMEZONE", "Asia/Seoul")
 # ---------- 기능 규칙 (SPEC 1.5) ----------
 RELEVANCE_THRESHOLD = 0.5      # URL 관련도 임계값 (이상이면 통과)
 BUDGET_TOLERANCE = 0.10        # 예산 근접 허용폭 (±10%)
+# 일정표에 예산 조정안을 꼭 넣어야 하는 초과 폭. 이 비율 이하로 넘으면 '초과'로 알리되 조정안 없이 진행한다.
+# 2026-11-05 사용자 결정: 15% 넘게 크지 않으면 그냥 진행(너무 빡빡하게 막지 않는다).
+BUDGET_ADJUSTMENT_THRESHOLD = 0.15
 DEFAULT_PARTY_SIZE = 1         # 정보 부족 시 기본 인원
 DEFAULT_ORIGIN = "인천"         # 정보 부족 시 기본 출발지
 BASE_CURRENCY = "KRW"          # 기준 통화

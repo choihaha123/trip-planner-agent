@@ -17,7 +17,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from src import config, retriever
+from src import config, memory, retriever
 from src.agent import (AgentContext, build_agent, get_text, is_throttled, make_llm, new_thread_id, open_checkpointer,
                        run_config)
 from src.middleware import process_url
@@ -47,8 +47,9 @@ def parse_setup(note: str) -> dict:
 def run_setup(setup: dict) -> str:
     """[setup]을 실행하고 이 케이스의 user_id를 돌려준다. reset → ingest 순서로 처리한다."""
     user_id = setup.get("user", config.DEFAULT_USER_ID)
-    if setup.get("reset", "").lower() == "true":
+    if setup.get("reset", "").lower() == "true":  # --reset과 같이 저장 링크와 장기 기억을 함께 지운다
         retriever.reset_user(user_id)
+        memory.reset_memory(user_id)
     if setup.get("ingest"):
         owner, _, url = setup["ingest"].partition(":")  # 'owner:https://...' 첫 ':'로 나눈다
         outcome = process_url(url, owner)

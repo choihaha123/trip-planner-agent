@@ -31,7 +31,7 @@ URL 저장 → 이후 대화에서 인용, 사용자 격리처럼 앞 단계 상
 | 키 | 의미 | 예 |
 |---|---|---|
 | `user` | 이 케이스를 실행할 user_id (생략 시 `default`) | `user=bob` |
-| `reset` | 실행 전 해당 user_id 수집 데이터 초기화 여부 | `reset=true` |
+| `reset` | 실행 전 해당 user_id 수집 데이터와 장기 기억 초기화 여부 (`--reset`과 같음, 2026-11-05 장기 기억 추가) | `reset=true` |
 | `ingest` | 사전에 저장해 둘 URL (해당 user에 대해 실행) | `ingest=alice:<URL>` |
 | `thread` | 대화 구분. `new`면 새 대화에서 실행 | `thread=new` |
 
@@ -74,6 +74,7 @@ URL 저장 → 이후 대화에서 인용, 사용자 격리처럼 앞 단계 상
   | 간접 인젝션 | `http://127.0.0.1:8765/inject.html` — `evaluation/fixtures/inject.html`을 평가 스크립트가 로컬 웹서버로 띄운다(외부 게시 없음) |
 - 평가는 데모 데이터(alice 등)를 건드리지 않도록 평가 전용 user_id(`eval_…`)를 쓴다.
 - 파일: 데이터 `evaluation/test_queries.csv`, 평가 스크립트 `evaluation/run_eval.py`, 인젝션 페이지 `evaluation/fixtures/inject.html`, 실행 결과 `evaluation/results/`(Step 12 리포트의 근거).
+- 데이터 변경 기록: (2026-11-05) 링크 안내 블록 이름 변경으로 7·17번 금지 항목과 16번 기대 항목을 '✖ 못 씀'으로. (2026-11-05) 일정 전 취향 되묻기(SERVICE 2.2) 추가로, 필수 정보를 다 준 한 턴 일정표를 확인하는 1번 입력 끝에 '나머지는 알아서 해줘.'를 붙였다(취향을 맡긴 경우 바로 일정표).
 
 ## 7. 평가 스크립트 (`evaluation/run_eval.py`)
 - 실행: `python -m evaluation.run_eval` (전체), `python -m evaluation.run_eval --ids 2,3` (일부). 기본 KB가 적재돼 있어야 한다.

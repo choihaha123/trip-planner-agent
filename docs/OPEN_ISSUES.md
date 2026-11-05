@@ -7,11 +7,12 @@
 
 | # | 항목 | 내용 | 결정 시점 |
 |---|---|---|---|
-| 7 | (선택) 장기 기억 설계 | 저장 방식(후보: LangGraph Store), 저장 항목, 저장 시점, 확인·삭제 방법, `--reset`과의 관계 | TASKS Step 13 시작 전 |
 | 8 | (선택) MCP 서버 설계 | MCP 라이브러리(후보: fastmcp, 신규 승인 필요), 노출 범위, 실행 방식 | TASKS Step 14 시작 전 |
-| 9 | (선택) 웹페이지 설계 | 웹 프레임워크·인증 방식(신규 승인 필요), 화면 구성, 비동기 여부 | TASKS Step 15 시작 전 |
 
 ## 결정됨
+- (2026-11-05) #9 웹페이지 설계: 백엔드 FastAPI(신규 승인, 0.162.0) + uvicorn(기존 설치). 화면은 빌드 도구 없는 HTML/CSS/JS를 FastAPI가 제공, 클로드·ChatGPT식(왼쪽 대화 목록 + 채팅 + 링크·기억 패널). 로그인은 이메일(중복 불가)·비밀번호, 비밀번호는 표준 `hashlib.scrypt`, 세션은 무작위 토큰을 SQLite에 저장하고 HttpOnly 쿠키로 전달(인증 라이브러리 없음). user_id는 이메일이 아닌 내부 ID(`u_` + 무작위). 답변 대기 중 단계 표시(SSE), 토큰 스트리밍은 나중. 동시 접속은 처음엔 에이전트 호출을 하나씩 처리(잠금). 1차 화면: 회원가입·로그인·로그아웃, 대화 목록(제목 자동·삭제)·새 대화, 마크다운 답변, 링크 패널(추가·목록·삭제·처리 결과), 기억 패널. 파일: `src/web/`(`__init__.py`·`app.py`·`auth.py`·`threads.py`·`static/`), `tests/test_web.py`, 데이터 `storage/web.sqlite`. → SERVICE.md 2.10 · TASKS.md Step 15 · CLAUDE.md · requirements.txt
+- (2026-11-05) 추후 기능 순서 변경: 장기 기억 → **웹페이지(Step 15) → MCP 서버(Step 14)**. 두 기능은 같은 에이전트 코어를 감싸는 별개 출입구라 의존 관계가 없고, 웹을 먼저 하며 정리한 코어(대화 목록·구조화 데이터·동시 접속)를 MCP가 재사용한다. → SERVICE.md 1.5 · TASKS.md Phase 6
+- (2026-11-05) #7 장기 기억 설계: 저장은 LangGraph `SqliteStore`(이미 설치된 `langgraph-checkpoint-sqlite`, 신규 라이브러리 없음) `storage/memory.sqlite`, 공간 `("users", user_id)`. 항목은 이름·호칭, 여행 선호, 답변 스타일(설정값이라 나중에 바꿀 수 있음, 출발지·동행은 넣지 않음). 매 턴 자동 추출: 파이썬 규칙으로 후보 메시지를 거른 뒤 판정 모델이 사용자가 직접 말한 정보만 항목별로 뽑고 파이썬이 검사·저장, 저장하면 답변 끝에 알림. 확인·삭제는 CLI 명령(`/memory`, `/forget-memory <항목>`), `--reset`은 저장 링크와 기억을 함께 지운다. 새 파일 `src/memory.py`·`tests/test_memory.py` 승인. 웹 확장 시 로그인 계정 ID를 user_id로 쓰면 그대로 이어진다. → SERVICE.md 1.5, 2.9 · TASKS.md Step 13 · CLAUDE.md
 - (2026-11-05) Step 12 평가 실패 수정: ① 출처 URL 없는 일반 답변의 가격은 이번 턴 검색 결과에서 같은 금액을 찾아 '(출처: 제목 URL)'을 자동으로 붙이고, 없으면 '출처 없음, 사용자 확인 필요' ② 일정 요청 표현이 있는 턴은 첫 모델 호출에서 `check_trip_info`를 강제 호출(`tool_choice`). → SERVICE.md 2.2, 2.8 · SPEC.md 2.2, 2.8
 - (2026-11-05) 검색 순서를 파이썬이 고정한다: 통합 도구 `search_travel_info`가 RAG(저장 자료+KB) 먼저 → Haiku가 질문·결과 관련성을 한 번에 판정해 관련 없는 결과 제외 → 관련 결과가 없으면 자동 웹 검색. 부족하면 LLM이 `web_search`로 보충(그 턴에 RAG를 안 했으면 웹 검색 도구가 RAG 먼저 수행). RAG 후보는 4 → 8개. `search_rag` 도구는 대체됨. → SERVICE.md 2.5 · SPEC.md 1.4, 2.1, 2.5 · EVALUATION.md 4 · evaluation/test_queries.csv
 - (2026-11-05) #1 평가 기준: 전체 80%(16/20) 이상 + guardrail 3건 전부 통과. URL 세트는 실제 URL(관련 2·무관 1·수집 실패 2) + 인젝션은 `evaluation/fixtures/inject.html`을 로컬 웹서버로 제공. #2 판정 방식: 도구 호출·문자열 포함/미포함은 코드로, 문자열로 어려운 항목(`~` 표시)만 Haiku 4.5가 예/아니오 채점. 평가 스크립트는 `evaluation/run_eval.py`, 결과는 `evaluation/results/`. → EVALUATION.md 5, 6 · CLAUDE.md
