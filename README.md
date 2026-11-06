@@ -1,4 +1,4 @@
-# miniPJT — 여행 계획·조언 에이전트
+# trip-planner-agent — 여행 계획·조언 에이전트
 
 LangChain·LangGraph와 Amazon Bedrock(Claude)으로 만든 여행 에이전트입니다. CLI와 웹 화면(회원가입·로그인)에서 같은 에이전트를 씁니다. 일정표·예산·날씨·환율·여행 Q&A를 출처와 함께 답하고, 사용자가 넣은 여행 글 URL을 판정해 사용자별로 저장해 두었다가 이후 대화에서도 근거로 씁니다.
 
