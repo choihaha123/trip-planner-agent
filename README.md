@@ -13,6 +13,24 @@ LangChain·LangGraph와 Amazon Bedrock(Claude)으로 만든 여행 에이전트�
 - **MCP 서버**: Claude Desktop 같은 MCP 클라이언트에 연결해, 채팅창에서 이 에이전트(일정표·출처·링크 저장·장기 기억)와 예산·환율·날짜·날씨 계산 도구를 씁니다. 각자 자기 PC에서 실행하며 비용은 자기 `.env`의 AWS 계정에서 나갑니다(아래 7-2).
 - **안전장치**: 여행 무관 요청 거절, 시스템 프롬프트 비공개, 사용자별 자료·대화 격리, 링크·웹 검색 결과 속 숨은 지시문(간접 프롬프트 인젝션: 제목·우회 표현·전각/폭 0 문자 포함) 차단, 가짜 출처 태그 무력화, 검색되지 않은 URL은 출처로 인정하지 않음, 출처 없는 가격에 '(출처 없음, 사용자 확인 필요)' 표시.
 
+## 활용한 패턴 (Day 1~7)
+12개 중 10개를 적용했습니다(일부는 부분 적용).
+
+| 패턴 | Day | 이 프로젝트에서 |
+|---|---|---|
+| LCEL · Pydantic 구조화 출력 | Day 1 | `with_structured_output`으로 URL 관련도 판정(`RelevanceJudgement`)·검색 결과 관련성(`ChunkJudgement`)·기억 추출(`MemoryExtraction`)·평가 채점을 Pydantic 모델로 받음 (`\|` 파이프 대신 직접 호출) |
+| RAG | Day 2 | Chroma 벡터 검색(기본 KB + 사용자별 저장 링크, Titan 임베딩) → Haiku 관련성 필터 → 부족하면 Tavily 웹 검색. 하이브리드(BM25)·리랭커·쿼리 확장은 쓰지 않음 |
+| ReAct (도구 자율 선택) | Day 3 | `create_agent`에 도구 8개를 붙여 모델이 고름. 일정 요청·상대 날짜는 `tool_choice`로 필요한 도구를 먼저 부르게 강제 |
+| 도구 다중 | Day 4 | 여행 정보 검색·웹 검색·환율(open.er-api)·날씨(Open-Meteo)·예산 계산·날짜 계산·정보 확인·일정표 렌더링을 한 질의에서 결합 (예: 일정 요청 → 정보 확인 → 검색 → 예산 계산 → 일정표) |
+| MCP 서버 연동 | Day 4 | `src/mcp_server.py`: 에이전트 전체(`ask_trip_agent`)와 예산·환율·날짜·날씨 도구 4개를 MCP 서버(stdio)로 노출해 Claude Desktop에서 호출 |
+| 가드레일 | Day 5 | 여행 외 요청 거절·시스템 프롬프트 비공개, 링크·웹 검색 결과 속 간접 프롬프트 인젝션을 정규식(NFKC 정규화)+LLM으로 2중 차단, 출처 없는 가격 표시. PII 마스킹은 없음 |
+| 미들웨어 | Day 5 | URL 전처리, 장기 기억, 턴당 모델 호출 상한, 지난 턴 도구 결과 정리(ContextEditing), 사용량 한도 시 대체 모델, 도구 오류 처리, 가격 출처·요일 교정. 대화 요약(Summarization)은 출처 손실 때문에 쓰지 않음 |
+| 장기 메모리 | Day 7 | LangGraph `SqliteStore`에 사용자별 이름·여행 선호·답변 스타일을 저장해 새 대화에도 반영 (Plan-Execute는 미적용) |
+| Observability · Trace | Day 7 | 자체 `TracingMiddleware`가 LLM·도구 호출(입출력·토큰·지연시간)을 `logs/trace.jsonl`에 기록 (LangSmith·LangFuse 대신) |
+| 평가 (LLM-as-Judge) | Day 7 | 자체 평가 세트 20건을 규칙 판정 + Haiku 채점으로 평가. RAGAS는 미사용 |
+
+미적용: HITL(`interrupt()` 승인), Multi-Agent Supervisor
+
 ## 실행 방법 (Windows PowerShell, 프로젝트 루트에서)
 
 ### 0) 준비
@@ -196,8 +214,29 @@ python -m evaluation.run_eval --ids 1,17   # 일부만 실행 (합격 여부는 
 - 합격 기준: 전체 80% 이상 + guardrail 전부 통과 (판정은 코드 검사 + 일부 항목만 Haiku 채점, 전체 실행에서만 판정, `docs/EVALUATION.md`)
 - 결과: `evaluation/results/eval_날짜시각.json`
 - 리포트
-  - [`evaluation/round2_report.md`](evaluation/round2_report.md) — **최신(Phase 7 수정 후)**: 공식 **17/20 (85%), guardrail 3/3, 합격**. 전체 3회 실행 85%·95%·85%, 실패 원인 분석과 남은 과제
-  - [`evaluation/round1_report.md`](evaluation/round1_report.md) — 1차 제출 시점(v1 평가 데이터) 20/20
+  - [`evaluation/round3_report.md`](evaluation/round3_report.md) — **최신(Phase 7 수정 후)**: 공식 **17/20 (85%), guardrail 3/3, 합격**. 전체 3회 실행 85%·95%·85%, 실패 원인 분석과 남은 과제
+  - [`evaluation/round2_report.md`](evaluation/round2_report.md) — 1차 제출 시점(v1 평가 데이터) 20/20
+  - [`evaluation/round1_report.md`](evaluation/round1_report.md) — v1 평가 데이터 첫 실행(수정 전) 16/20, 실패 4건 분석
+
+### 인-아웃 세트 통과율 (자체 평가, 20건: positive 8 · negative 4 · edge 5 · guardrail 3)
+- 1차 (v1 평가 세트, 첫 실행): 16 / 20 통과 ([`round1_report.md`](evaluation/round1_report.md))
+- 2차 (v1, 개선 후): 20 / 20 통과 ([`round2_report.md`](evaluation/round2_report.md))
+- 개선폭: +4건 (주요 개선: 실패 4건이 모두 LLM이 프롬프트로 지시한 절차를 건너뛴 경우여서 코드로 강제 — 검색 순서 고정(KB 먼저 → 웹)과 Haiku 관련성 필터, 가격 출처 자동 표기, `check_trip_info` 호출 강제)
+- 참고: 더 어려운 v2 평가 세트로 바꾼 뒤 3회 실행 17·19·17 / 20, 공식 17 / 20 (85%), guardrail 3/3 합격 ([`round3_report.md`](evaluation/round3_report.md))
+
+## 아키텍처
+```
+ CLI (main.py) ──────┐
+ 웹 (FastAPI + SSE) ─┼──▶ 에이전트 (create_agent · Bedrock Claude Sonnet 4.5)
+ MCP 서버 (stdio) ───┘      미들웨어: URL 전처리 · 장기 기억 · 호출 상한 · 대체 모델 · 추적
+                            │ 도구 8개
+     ┌──────────────────────┼─────────────────────┬──────────────────────┐
+  RAG 검색                 외부 API               파이썬 계산              일정표
+  Chroma(기본 KB+사용자 링크)  Tavily·Open-Meteo·환율   예산·날짜·정보 확인       render_itinerary
+  + Haiku 관련성 필터
+ 저장소: SQLite 체크포인터(대화) · SqliteStore(장기 기억) · web.sqlite(계정) · logs/trace.jsonl(추적)
+```
+한 턴 안의 단계별 흐름은 아래 [한 턴의 처리 흐름](#한-턴의-처리-흐름)을 참고하세요.
 
 ## 프로젝트 구조
 ```
@@ -247,8 +286,28 @@ docs/                        기획서·구현 명세·평가 기준·시나리�
 - 웹페이지 수집: requests + BeautifulSoup (주소 검사·시간·크기 제한을 직접 처리)
 - MCP 서버: 공식 `mcp` Python SDK 2.3 (`MCPServer`, stdio)
 
+## 트라이앤에러 회고
+**시도했지만 실패한 접근**
+- 검색 순서("저장 자료·KB 먼저")와 정보 확인을 프롬프트로만 지시 → LLM이 자주 건너뜀(웹 출처만 인용, 도구 없이 직접 되묻기)
+- 긴 대화를 그대로 넘김 → "고마워" 한마디에 입력 102,661토큰. 대화 요약(Summarization)은 기록이 바뀌고 출처가 사라져 보류
+- WebBaseLoader로 웹페이지 수집 → 내부망 차단·크기·시간 제한을 직접 제어할 수 없음
+- 인젝션 검사 정규식 초안 → QA가 시험한 우회 표현 11개 중 9개를 놓침
+
+**최종 채택한 접근**
+- "절차는 코드로 강제": 통합 검색 도구(`search_travel_info`)로 검색 순서 고정, `tool_choice`로 `check_trip_info`·`resolve_dates` 먼저 호출, 계산·규칙 판정은 모두 파이썬
+- `check_trip_info` 강제 조건이 너무 넓어 여행과 무관한 요청에도 걸림 → 여행 관련 신호가 있을 때만 강제하도록 좁힘
+- ContextEditing으로 지난 턴 도구 결과만 정리해 토큰을 줄이면서 출처 유지
+- requests + BeautifulSoup로 직접 수집(내부망 차단·15초·3MB)
+- NFKC 정규화와 한국어 우회 표현을 추가하고, LLM 판정과 함께 2중 검사
+
+**남은 한계 · 향후 개선 방향**
+- 같은 평가 세트도 실행마다 결과가 흔들림(85% · 95% · 85%), 날씨 출처 누락·KB 대신 웹 출처 인용이 가끔 발생 → 해당 절차도 코드로 강제
+- 가격 출처 표기는 숫자 일치 방식이라 잘못 연결될 수 있음
+- 검색 품질을 수치로 보지 않음 → RAGAS 지표 측정, BM25 하이브리드·리랭킹 검토
+- PII 마스킹·HITL 승인 없음 (자세한 내용은 아래 '알려진 한계')
+
 ## 알려진 한계
-- 평가를 세 번 돌리면 실패 케이스가 매번 달랐습니다(85%·95%·85%). 날씨 출처를 빠뜨리거나, 공식 KB 대신 웹 출처를 인용하거나, 저장한 글을 검색하지 않고 답하는 경우가 가끔 있습니다(`evaluation/round2_report.md` 5.2절).
+- 평가를 세 번 돌리면 실패 케이스가 매번 달랐습니다(85%·95%·85%). 날씨 출처를 빠뜨리거나, 공식 KB 대신 웹 출처를 인용하거나, 저장한 글을 검색하지 않고 답하는 경우가 가끔 있습니다(`evaluation/round3_report.md` 5.2절).
 - 일정표는 구체성 검사 재시도까지 포함해 1~2분 걸릴 수 있습니다.
 - 2차 점검에서 나온 지적(상대 날짜 계산 오류 가능성, 비용 상한, DNS 리바인딩 등 보안, 로그 관리 등)은 `docs/TASKS.md` Phase 8에 정리돼 있으며 아직 반영하지 않았습니다. CLI·웹·MCP 서버는 모두 로컬 실행(자기 PC, 웹은 127.0.0.1)을 전제로 합니다.
 
@@ -260,5 +319,6 @@ docs/                        기획서·구현 명세·평가 기준·시나리�
 - [`docs/SCENARIOS.md`](docs/SCENARIOS.md): 1차 완료 시나리오
 - [`docs/OPEN_ISSUES.md`](docs/OPEN_ISSUES.md): 미결 항목
 - [`docs/TASKS.md`](docs/TASKS.md): 작업 계획서
-- [`evaluation/round2_report.md`](evaluation/round2_report.md): 평가 리포트 v2 (최신, Phase 7 수정 후)
-- [`evaluation/round1_report.md`](evaluation/round1_report.md): 평가 리포트 v1 (1차 제출 시점)
+- [`evaluation/round3_report.md`](evaluation/round3_report.md): 평가 리포트 v2 (최신, Phase 7 수정 후)
+- [`evaluation/round2_report.md`](evaluation/round2_report.md): 평가 리포트 v1 (1차 제출 시점)
+- [`evaluation/round1_report.md`](evaluation/round1_report.md): 평가 리포트 v1 첫 실행 (수정 전)
