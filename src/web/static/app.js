@@ -852,6 +852,65 @@ function autoGrow() {
   el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
 }
 
+// ---------- 이스터에그: 로고 이륙, 기장 방송, 야간 비행 모드 ----------
+const KONAMI = ["ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown", "ArrowLeft", "ArrowRight", "ArrowLeft", "ArrowRight", "KeyB", "KeyA"];
+let konamiPos = 0;
+let logoTaps = [];
+
+function showToast(text) {
+  /** 화면 아래에 짧은 안내를 잠깐 띄운다(3초 뒤 사라짐). */
+  document.querySelector(".toast")?.remove();
+  const toast = document.createElement("div");
+  toast.className = "toast";
+  toast.setAttribute("role", "status");
+  toast.textContent = text;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 3000);
+}
+
+function takeOff(event) {
+  /** 로고를 누르면 비행기가 화면을 가로질러 날아갔다가 돌아온다. 2.5초 안에 5번 누르면 기장 방송. */
+  const brand = event.currentTarget;
+  const now = Date.now();
+  logoTaps = logoTaps.filter((t) => now - t < 2500).concat(now);
+  if (logoTaps.length >= 5) { logoTaps = []; showToast("기장입니다. 승객 여러분, 곧 이륙하겠습니다 ✈"); }
+  if (brand.classList.contains("away") || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const box = brand.getBoundingClientRect();  // 로고 칸(24px)은 .brand 왼쪽 끝, 세로 가운데
+  const plane = document.createElement("span");
+  plane.className = "takeoff";
+  plane.style.left = `${box.left + 4}px`;
+  plane.style.top = `${box.top + box.height / 2 - 8}px`;
+  document.body.appendChild(plane);
+  brand.classList.add("away");
+  plane.addEventListener("animationend", () => {
+    plane.remove();
+    brand.classList.replace("away", "landing");
+    setTimeout(() => brand.classList.remove("landing"), 500);
+  });
+}
+
+function setNightMode(on, announce) {
+  /** 야간 비행 모드(어두운 화면)를 켜고 끈다. 이 브라우저에 기억해 다음 방문에도 유지한다. */
+  const root = document.documentElement;
+  if (announce) { root.classList.add("theme-fade"); setTimeout(() => root.classList.remove("theme-fade"), 600); }
+  if (on) root.dataset.theme = "night"; else delete root.dataset.theme;
+  try { localStorage.setItem("trip-theme", on ? "night" : "day"); } catch (_) { /* 저장 불가: 이번 방문에만 적용 */ }
+  if (announce) showToast(on ? "🌙 야간 비행 모드 · 객실 조명을 낮춥니다" : "☀️ 주간 비행 모드 · 좋은 아침입니다");
+}
+
+function watchKonami(event) {
+  /** 코나미 커맨드(↑↑↓↓←→←→BA)를 누르면 야간 비행 모드를 켜고 끈다. 한글 입력 상태에서도 되게 키 위치(code)로 본다. */
+  const code = event.code;
+  konamiPos = code === KONAMI[konamiPos] ? konamiPos + 1 : (code === KONAMI[0] ? 1 : 0);
+  if (konamiPos < KONAMI.length) return;
+  konamiPos = 0;
+  setNightMode(document.documentElement.dataset.theme !== "night", true);
+  if (event.target === $("#input")) {  // 입력창에 쳐진 B·A(ㅠ·ㅁ)는 지운다
+    event.preventDefault();
+    setTimeout(() => { $("#input").value = $("#input").value.replace(/(?:[bBㅠ][aAㅁ]?|뮤|ㅠ)$/, ""); autoGrow(); }, 0);
+  }
+}
+
 function openSidebar() { $("#sidebar").classList.add("open"); $("#scrim").hidden = false; }
 function closeSidebar() { $("#sidebar").classList.remove("open"); $("#scrim").hidden = true; }
 
@@ -881,6 +940,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("#close-memory").addEventListener("click", closePanels);
   $("#link-form").addEventListener("submit", addLinks);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePanels(); });
+  document.addEventListener("keydown", watchKonami);
+  $(".side-top .brand").addEventListener("click", takeOff);
+  try { if (localStorage.getItem("trip-theme") === "night") setNightMode(true, false); } catch (_) { /* 저장소 없음 */ }
   try {
     const me = await api("/api/me");
     await showApp(me.email);

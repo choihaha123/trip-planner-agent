@@ -27,6 +27,10 @@
   --shadow: 0 1px 2px rgba(24, 24, 26, .04), 0 8px 24px -8px rgba(24, 24, 26, .10);
   --shadow-lg: 0 1px 2px rgba(24, 24, 26, .04), 0 24px 60px -20px rgba(24, 24, 26, .18);
   --ease: cubic-bezier(.2, .7, .2, 1);
+  --logo-bg: linear-gradient(140deg, #3A4A66, #18181A 70%);   /* 로고 칸(야간 모드에서도 어두운 칸 유지) */
+  --logo-plane: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z'/%3E%3C/svg%3E");   /* 로고 흰 선 비행기 */
+  --plane-takeoff: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-2 -2 28 28'%3E%3Cpath fill='%2318181A' stroke='white' stroke-width='3.5' stroke-linejoin='round' paint-order='stroke' d='M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z'/%3E%3C/svg%3E");   /* 이륙 비행기: 먹색 몸체 + 흰 테두리(로고 칸 안에서도 보이게) */
+  --plane-solid: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z'/%3E%3C/svg%3E");   /* 채운 비행기 모양(mask용: 진행 경로선·이륙 애니메이션) */
   --font: "Pretendard Variable", "Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif, "Segoe UI Emoji";
 }
 
@@ -55,8 +59,7 @@ a:hover { text-decoration-color: currentColor; }
 .icon-btn { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-btn); width: 36px; height: 36px; cursor: pointer; color: var(--text); }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -.025em; }
 .brand::before { content: ""; flex: none; width: 24px; height: 24px; border-radius: 7px;  /* 로고: 먹색 칸 + 흰 선 비행기 */
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z'/%3E%3C/svg%3E") center / 14px no-repeat,
-    linear-gradient(140deg, #3A4A66, var(--ink) 70%); }
+  background: var(--logo-plane) center / 14px no-repeat, var(--logo-bg); }
 
 /* ---------- 로그인 ---------- */
 .auth { min-height: 100%; display: grid; place-items: center; padding: 32px 16px;
@@ -178,9 +181,14 @@ a:hover { text-decoration-color: currentColor; }
 /* 진행 단계 */
 .progress { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 16px 18px; font-size: 13.5px; box-shadow: var(--shadow-sm); }
 .route { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .06em; margin-bottom: 12px; }
-.route .line { flex: 1; max-width: 240px; height: 2px; border-radius: 2px; background: var(--line); position: relative; overflow: hidden; }
-.route .line::after { content: ""; position: absolute; inset: 0; width: 35%; border-radius: 2px; background: var(--accent); animation: fly 1.6s var(--ease) infinite; }
-@keyframes fly { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+.route .line { flex: 1; max-width: 240px; height: 2px; position: relative;   /* 점선 항로 위를 작은 비행기가 출발→도착으로 난다 */
+  background: repeating-linear-gradient(90deg, var(--line-strong) 0 4px, transparent 4px 8px); }
+.route .line::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 2px; background: var(--accent); animation: trail 2.4s ease-in-out infinite; }
+.route .line::after { content: ""; position: absolute; left: 0; top: 50%; width: 16px; height: 16px; margin-top: -8px; background: var(--accent);
+  -webkit-mask: var(--plane-solid) center / contain no-repeat; mask: var(--plane-solid) center / contain no-repeat; transform: rotate(45deg);
+  animation: flight 2.4s ease-in-out infinite; }
+@keyframes flight { 0% { left: -4px; opacity: 0; } 12%, 82% { opacity: 1; } 100% { left: calc(100% - 12px); opacity: 0; } }
+@keyframes trail { 0% { width: 0; opacity: 1; } 82% { opacity: 1; } 100% { width: calc(100% - 12px); opacity: 0; } }
 .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .steps li { color: var(--muted); display: flex; align-items: baseline; gap: 8px; }
 .steps li::before { content: "✓"; flex: none; width: 12px; color: var(--ok); font-weight: 700; }
@@ -341,6 +349,64 @@ a:hover { text-decoration-color: currentColor; }
   .welcome { padding-top: 4vh; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .route .line::after { animation: none; width: 100%; } .sidebar { transition: none; } .msg.draft .md > :last-child::after { animation: none; }
+  .route .line::after { animation: none; left: calc(50% - 8px); } .route .line::before { animation: none; width: 50%; } .sidebar { transition: none; } .msg.draft .md > :last-child::after { animation: none; }
   .msg { animation: none; } .steps li.now::before { animation: none; } .ticket, .ticket::after { transition: none; }
 }
+
+/* ---------- 이스터에그 ---------- */
+/* 로고 이륙: 사이드바 로고를 누르면 비행기만 화면을 가로질러 날아갔다가 돌아온다 */
+.side-top .brand { cursor: pointer; user-select: none; }
+.side-top .brand.away::before { background: var(--logo-bg); }
+.side-top .brand.landing::before { animation: land .5s var(--ease); }
+@keyframes land { from { transform: translateY(5px) scale(.85); } }
+.takeoff { position: fixed; z-index: 50; width: 16px; height: 16px; pointer-events: none; background: var(--plane-takeoff) center / contain no-repeat;
+  animation: takeoff 1.5s cubic-bezier(.55, 0, .8, .4) forwards; }
+@keyframes takeoff {
+  0% { transform: translate(0, 0) scale(1); }
+  18% { transform: translate(-5px, 5px) scale(.9); }
+  100% { transform: translate(110vw, -80vh) scale(2.4); opacity: .85; }
+}
+
+/* 안내 토스트(기장 방송·야간 모드 알림) */
+.toast { position: fixed; left: 50%; bottom: 104px; z-index: 60; transform: translateX(-50%); pointer-events: none; white-space: nowrap;
+  background: var(--ink); color: var(--bg); padding: 10px 18px; border-radius: 999px; font-size: 13.5px; font-weight: 600; box-shadow: var(--shadow-lg);
+  animation: toast 3s var(--ease) forwards; }
+@keyframes toast { 0% { opacity: 0; transform: translate(-50%, 8px); } 10%, 85% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; transform: translate(-50%, -4px); } }
+
+/* 야간 비행 모드(코나미 커맨드 ↑↑↓↓←→←→BA): 색 변수만 바꾸고, 직접 적힌 색은 아래에서 덮어쓴다 */
+.theme-fade, .theme-fade * { transition: background-color .5s ease, color .5s ease, border-color .5s ease !important; }
+:root[data-theme="night"] {
+  color-scheme: dark;
+  --bg: #121316; --side: #17181C; --surface: #1D1E23; --user: #2B2D34; --ink: #ECEAE5;
+  --accent: #94B4EA; --accent-soft: #233149;
+  --text: #ECEAE5; --muted: #A39E95; --faint: #6F6B64; --line: #2B2C32; --line-strong: #43444C;
+  --ok: #5CC48E; --fail: #F2867A; --fail-bg: #2C1B1B; --pin: #E8B866; --pin-bg: #2E2618;
+  --logo-bg: linear-gradient(140deg, #4A5C7E, #1E2738 70%);
+  --plane-takeoff: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-2 -2 28 28'%3E%3Cpath fill='%23ECEAE5' stroke='%23121316' stroke-width='3.5' stroke-linejoin='round' paint-order='stroke' d='M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z'/%3E%3C/svg%3E");
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px -8px rgba(0, 0, 0, .6);
+  --shadow-lg: 0 1px 2px rgba(0, 0, 0, .4), 0 24px 60px -20px rgba(0, 0, 0, .75);
+}
+[data-theme="night"] * { scrollbar-color: #3A3B42 transparent; }
+[data-theme="night"] a { text-decoration-color: rgba(148, 180, 234, .4); }
+[data-theme="night"] .primary { color: #121316; }
+[data-theme="night"] .primary:hover:not(:disabled) { background: #FFFFFF; }
+[data-theme="night"] .composer .primary.stop { color: var(--text); }
+[data-theme="night"] .auth { background: radial-gradient(1200px 600px at 50% -10%, #1F2230, transparent 70%), var(--bg); }
+[data-theme="night"] .topbar { background: rgba(18, 19, 22, .85); }
+[data-theme="night"] .thread { color: #CFCBC3; }
+[data-theme="night"] .thread:hover { background: rgba(255, 255, 255, .05); }
+[data-theme="night"] .thread.on { background: rgba(255, 255, 255, .09); color: var(--text); }
+[data-theme="night"] .thread .del:hover, [data-theme="night"] .saved-link .del:hover, [data-theme="night"] .memory-item .del:hover { background: rgba(255, 255, 255, .08); }
+[data-theme="night"] .md .sub, [data-theme="night"] .md th, [data-theme="night"] .notice, [data-theme="night"] .itin-tab,
+[data-theme="night"] .stop-act, [data-theme="night"] .day-cost { color: #CFCBC3; }
+[data-theme="night"] .itin-tab.on { color: #121316; }
+[data-theme="night"] .itin-tab.on small { color: rgba(18, 19, 22, .7); }
+[data-theme="night"] .itin-changes { background: #16241C; }
+[data-theme="night"] .chg, [data-theme="night"] .verdict.ok, [data-theme="night"] #memory-result .ok,
+[data-theme="night"] .timeline .stop.changed::before { background: #1B3226; }
+[data-theme="night"] .pin { border-color: #4A3B1F; }
+[data-theme="night"] .msg.error .bubble { border-color: #5A2B27; }
+[data-theme="night"] .welcome::before { content: "Night Flight · 야간 비행"; }
+
+@media (prefers-reduced-motion: reduce) { .side-top .brand.landing::before, .toast { animation: none; } }
