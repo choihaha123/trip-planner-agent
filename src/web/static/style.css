@@ -278,9 +278,11 @@ a:hover { text-decoration-color: currentColor; }
 .itin-changes ul { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
 .itin-changes b { font-weight: 600; color: var(--ok); }
 .itin-assume { padding: 10px 20px 0; font-size: 12.5px; color: var(--muted); }
-.itin-tabs { display: flex; gap: 6px; padding: 14px 20px 4px; overflow-x: auto; scrollbar-width: none; }
-.itin-tab { flex: none; display: grid; justify-items: center; gap: 0; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line);
-  background: var(--surface); font-size: 13px; font-weight: 600; cursor: pointer; color: #45423D; line-height: 1.35; }
+.itin-tabs { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; padding: 14px 20px 4px; }  /* 일정이 길면 화면 폭에 맞춰 여러 줄로 */
+.itin-tab { min-width: 0; display: grid; justify-items: center; gap: 0; padding: 6px 8px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--surface); font-size: 13px; font-weight: 600; cursor: pointer; color: #45423D; line-height: 1.35; white-space: nowrap;
+  transition: border-color .12s, background .12s; }
+.itin-tab:hover:not(.on) { border-color: var(--line-strong); background: var(--bg); }
 .itin-tab small { font-size: 11px; font-weight: 500; color: var(--muted); }
 .itin-tab.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .itin-tab.on small { color: rgba(255, 255, 255, .8); }
