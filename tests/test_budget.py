@@ -99,6 +99,30 @@ class TestBudget(unittest.TestCase):
         with self.assertRaises(BudgetError):
             compute_budget([item("입장권", 1, 1, "per_person", day=5)], people=1, nights=2, rate_fn=fixed_rate)
 
+    def test_lodging_must_be_per_room_per_night(self):
+        """숙박은 객실 1박 단가로만 받는다. 1박 값을 1회 비용으로 넣으면 박 수만큼 빠지므로 거부한다(R1-4).
+        분류가 lodging이거나, 분류가 other인데 이름이 숙박류일 때 검사하고, 교통으로 분류한 '호텔 셔틀'과 당일 일정은 검사하지 않는다."""
+        for lodging in (item("숙박 (2박)", 150_000, 180_000, "per_person", category="lodging"),
+                        item("호텔", 150_000, 180_000, "per_person"),
+                        item("료칸", 300_000, 300_000, "group")):
+            with self.assertRaises(BudgetError) as e:
+                compute_budget([lodging], people=1, nights=2, rate_fn=fixed_rate)
+            self.assertIn("per_room_per_night", str(e.exception))
+        ok = compute_budget([item("숙박", 150_000, 180_000, "per_room_per_night", category="lodging")],
+                            people=1, nights=2, rate_fn=fixed_rate)
+        self.assertEqual(ok["group_total"], (300_000, 360_000))                   # 1박 단가 × 2박
+        compute_budget([item("호텔 셔틀버스", 1_000, 1_000, "per_person", category="local_transport")],
+                       people=1, nights=2, rate_fn=fixed_rate)
+        compute_budget([item("숙박", 100_000, 100_000, "group", category="lodging")], people=1, nights=0, rate_fn=fixed_rate)
+
+    def test_room_basis_shown_only_for_groups(self):
+        """'(2인 1실 기준)'은 2명 이상일 때만 보인다(혼자인데 2인 1실이라 하던 표시)."""
+        lodging = [item("숙박", 100_000, 100_000, "per_room_per_night", category="lodging")]
+        solo = render_budget(compute_budget(lodging, people=1, nights=1, rate_fn=fixed_rate), for_user=True)
+        pair = render_budget(compute_budget(lodging, people=2, nights=1, rate_fn=fixed_rate), for_user=True)
+        self.assertNotIn("1실 기준", solo)
+        self.assertIn(f"객실 1개({config.PEOPLE_PER_ROOM}인 1실 기준)", pair)
+
 
 if __name__ == "__main__":
     unittest.main()

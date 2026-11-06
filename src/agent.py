@@ -111,15 +111,15 @@ def system_prompt_with_date(request: ModelRequest) -> str:
 
 @after_model
 def label_prices_in_answer(state, runtime):
-    """최종 답변(도구 호출 없는 AI 메시지)에 출처 URL이 하나도 없는데 가격 표현이 있으면, 가격마다 근거를 붙인다.
-    이번 턴 검색 결과에서 온 금액은 '(출처: 제목 URL)', 어느 도구 결과에도 없는 금액은 '(출처 없음, 사용자 확인 필요)'.
-    (SERVICE 2.6, 일정표는 render_itinerary가 따로 처리)"""
+    """최종 답변(도구 호출 없는 AI 메시지)의 가격 표현마다 근거를 확인해 붙인다(annotate_answer_prices).
+    이번 턴 검색 결과에서 온 금액은 답변이 그 출처를 인용하지 않았을 때만 '(출처: 제목 URL)', 어느 도구 결과에도 없는
+    금액은 '(출처 없음, 사용자 확인 필요)'. 답변에 URL이 있어도 가격마다 판정한다(R1). (SERVICE 2.6, 일정표는 render_itinerary가 따로 처리)"""
     messages = state["messages"]
     last = messages[-1] if messages else None
     if last is None or last.type != "ai" or getattr(last, "tool_calls", None):
         return None
     text = get_text(last)
-    if not text or "http" in text:  # 출처 URL이 있는 답변은 가격도 출처에서 온 것으로 본다
+    if not text:
         return None
     turn_start = max((i for i, m in enumerate(messages) if m.type == "human"), default=0)
     tool_text = "\n".join(str(m.content) for m in messages[turn_start:] if m.type == "tool")
@@ -131,7 +131,11 @@ def label_prices_in_answer(state, runtime):
     return {"messages": [AIMessage(content=annotated, id=last.id)]}  # 같은 id로 교체
 
 
-ITINERARY_REQUEST = re.compile(r"일정|코스\s*(를|좀)?\s*짜|여행\s*계획|스케줄|플랜")
+# 일정표를 만들어 달라는 요청: '일정·코스·스케줄·플랜·동선·계획' 뒤 8글자 안에 만들기 동사가 오거나, '여행 계획해/좀/부탁', '일정표'.
+# (R5-2: 전에는 '일정' 한 단어에도 걸려 '눈축제 일정 알려줘' 같은 단발 질문에 인원·예산을 되물었다. '코스 추천'은 단발 추천이라 뺀다)
+_PLAN_NOUN = r"(?:일정|코스|스케줄|플랜|동선|계획)"
+_PLAN_VERB = r"(?:짜|만들|세워|세우|잡아|구성|부탁)"
+ITINERARY_REQUEST = re.compile(rf"일정표|{_PLAN_NOUN}[^.?!\n]{{0,8}}?{_PLAN_VERB}|여행\s*계획\s*(?:해|좀|부탁)")
 
 
 @wrap_model_call
@@ -201,6 +205,8 @@ class ClearPreviousTurnTools:
     """ContextEditingMiddleware에 넣는 기록 정리 규칙. 지난 턴(마지막 사용자 메시지 이전)의 도구 결과는 짧은 문구로,
     도구 호출 인자는 빈 값으로 바꾼다. 지금 턴과 사용자 메시지·답변 본문, 그리고 턴의 최종 답변인 도구 결과
     (render_itinerary 일정표)는 그대로 둔다. 메시지를 지우지 않아 도구 호출·결과 짝은 유지된다. (SPEC 2.8)
+    가장 최근 일정표의 render_itinerary 호출 인자도 남긴다: 항목별 출처 ID가 거기에만 있어, 지우면 일정 수정 턴에서
+    바꾸지 않은 항목까지 이번 턴 검색 결과의 출처로 바뀐다(2026-11-05 R1-1 재현: 유지 0/15 → H 끄면 14/15).
     2026-11-05: 긴 대화창에서 '고마워~' 한마디에 지난 검색 결과가 그대로 실려 입력 102,661토큰이던 사례로 추가."""
 
     def apply(self, messages: list, *, count_tokens=None) -> None:
@@ -209,12 +215,16 @@ class ClearPreviousTurnTools:
         if len(humans) < 2:
             return
         turn_ends = {nxt - 1 for nxt in humans[1:]}  # 지난 턴들의 마지막 메시지(최종 답변) 위치
+        keep_args = max((i for i in range(humans[-1]) if isinstance(messages[i], AIMessage)
+                         and any(tc.get("name") == "render_itinerary" for tc in messages[i].tool_calls)), default=None)
         cleared = 0
         for i in range(humans[-1]):
             m = messages[i]
             if isinstance(m, ToolMessage) and i not in turn_ends and m.content != PREVIOUS_TURN_TOOL_RESULT:
                 messages[i] = m.model_copy(update={"content": PREVIOUS_TURN_TOOL_RESULT})
                 cleared += 1
+            elif i == keep_args:  # 가장 최근 일정표의 출처 ID(호출 인자)는 일정 수정에 필요해 남긴다
+                continue
             elif isinstance(m, AIMessage) and any(tc.get("args") for tc in m.tool_calls):
                 messages[i] = m.model_copy(update={"tool_calls": [dict(tc, args={}) for tc in m.tool_calls]})
                 cleared += 1

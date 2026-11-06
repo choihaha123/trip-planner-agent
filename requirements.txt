@@ -17,7 +17,9 @@ langchain-text-splitters>=1.1,<2      # 청킹
 langchain-chroma>=1.1,<2              # 영구 벡터DB (기본 KB / 사용자 수집 컬렉션)
 
 # 웹페이지 수집 (docs/SPEC.md 2.1, src/collector.py, 승인됨)
-langchain-community>=0.4.2,<0.5       # WebBaseLoader
+# 2026-11-05 R2: WebBaseLoader(langchain-community) 대신 requests로 직접 가져와 주소 검사·전체 시간·크기를 제한한다.
+requests>=2.32,<3                     # 페이지 요청 (리다이렉트를 직접 따라가며 홉마다 주소 검사, 이미 langchain 의존성으로 설치됨)
+urllib3>=2.8,<3                       # 본문을 도착한 만큼씩 받기(HTTPResponse.read1) — requests의 하부 라이브러리
 beautifulsoup4>=4.15,<5               # HTML 텍스트·제목 추출
 
 # 보조 (규칙 이행용)

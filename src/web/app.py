@@ -17,18 +17,18 @@ from main import error_message
 from src import config
 from src.agent import AgentContext, build_agent, get_text, open_checkpointer, run_config
 from src.memory import delete_memory, get_memory
-from src.middleware import SAVED_STATUSES, build_url_notice, extract_urls, process_urls
+from src.middleware import SAVED_STATUSES, build_url_notice, extract_urls, process_urls, saved_references_this_turn
+from src.tools import itinerary_view
 from src.retriever import delete_user_source, list_user_pages
-from src.web import auth, threads
+from src.web import auth, runs, threads
 
 logger = logging.getLogger(__name__)
 
-# 에이전트는 프로세스에서 하나만 만들고, 호출은 한 번에 하나씩 처리한다(대화 기록·벡터DB·기억 저장소가
-# CLI 한 명 사용을 전제로 만들어져 있어, 동시 호출 안전성을 점검하기 전까지 잠금으로 순서를 지킨다).
+# 에이전트는 프로세스에서 하나만 만들고 여러 대화가 함께 쓴다. 답변은 대화마다 백그라운드로 돌린다(runs.py, R4).
+# (2026-11-06 점검: 체크포인터·기억 저장소는 내부 잠금, 모델·미들웨어는 요청별 상태가 없어 대화 단위 동시 실행이 안전하다)
 _agent = None
 _checkpointer = None
 _agent_init_lock = threading.Lock()
-AGENT_LOCK = threading.Lock()
 
 # 진행 단계 표시: 모델이 부른 도구 → 화면 문구 (SERVICE 2.10)
 TOOL_STAGES = {
@@ -132,20 +132,31 @@ def owned_thread(user: dict, thread_id: str) -> dict:
     return thread
 
 
+def answer_view(message, messages: list) -> dict:
+    """턴의 최종 답변 하나를 화면용 {role, content[, itinerary]}로 만든다. 일정표(render_itinerary 결과)면 카드용 데이터를 붙인다
+    (R5-5: 📌는 대화 전체 검색 결과의 저장 자료 기준). 줄글(content)은 '글로 보기'·복사용으로 그대로 둔다."""
+    view = {"role": "assistant", "content": get_text(message)}
+    if getattr(message, "name", "") == "render_itinerary":
+        card = itinerary_view(getattr(message, "artifact", None), saved_references_this_turn(messages, whole_conversation=True))
+        if card:
+            view["itinerary"] = card
+    return view
+
+
 def history_messages(messages: list) -> list[dict]:
-    """체크포인트 메시지를 화면용 [{role, content}]으로 바꾼다. 턴마다 사용자 메시지와 그 턴의 마지막 메시지(최종 답변,
+    """체크포인트 메시지를 화면용 [{role, content[, itinerary]}]으로 바꾼다. 턴마다 사용자 메시지와 그 턴의 마지막 메시지(최종 답변,
     일정표면 render_itinerary 결과)만 보여 주고, 중간의 도구 호출·결과는 뺀다."""
     shown, turn_last = [], None
     for m in messages:
         if getattr(m, "type", "") == "human":
             if turn_last is not None:
-                shown.append({"role": "assistant", "content": get_text(turn_last)})
+                shown.append(answer_view(turn_last, messages))
             shown.append({"role": "user", "content": get_text(m)})
             turn_last = None
         else:
             turn_last = m
     if turn_last is not None:
-        shown.append({"role": "assistant", "content": get_text(turn_last)})
+        shown.append(answer_view(turn_last, messages))
     return shown
 
 
@@ -184,8 +195,9 @@ def sse(event: str, data: dict) -> str:
 
 @app.get("/api/threads")
 def list_threads(user: dict = Depends(current_user)) -> list[dict]:
-    """내 대화 목록(최근 사용 순)."""
-    return threads.list_threads(user["user_id"])
+    """내 대화 목록(최근 사용 순). running은 지금 답변 중인 대화(화면이 다시 열 때 이어 본다)."""
+    running = runs.running_ids()
+    return [{**t, "running": t["thread_id"] in running} for t in threads.list_threads(user["user_id"])]
 
 
 @app.post("/api/threads")
@@ -196,26 +208,36 @@ def create_thread(user: dict = Depends(current_user)) -> dict:
 
 @app.delete("/api/threads/{thread_id}")
 def delete_thread(thread_id: str, user: dict = Depends(current_user)) -> dict:
-    """내 대화를 목록과 대화 기록에서 지운다."""
+    """내 대화를 목록과 대화 기록에서 지운다. 답변 중이면 먼저 멈추고 끝나기를 기다린다
+    (지운 뒤에 진행 중이던 실행이 기록을 다시 쓰지 않게). 제때 멈추지 않으면 409."""
     owned_thread(user, thread_id)
     _, checkpointer = get_agent()
-    with AGENT_LOCK:  # 답변 중인 대화를 지우다 기록이 엇갈리지 않게 에이전트 호출과 순서를 맞춘다
-        threads.delete_thread(user["user_id"], thread_id, checkpointer)
+    runs.stop_run(thread_id)
+    if not runs.wait_finished(thread_id, config.WEB_DELETE_WAIT_SECONDS):
+        raise HTTPException(status_code=409, detail="답변을 멈추는 중입니다. 잠시 후 다시 지워 주세요.")
+    threads.delete_thread(user["user_id"], thread_id, checkpointer)
     return {"ok": True}
 
 
 @app.get("/api/threads/{thread_id}/messages")
 def thread_messages(thread_id: str, user: dict = Depends(current_user)) -> dict:
-    """대화의 지난 메시지(화면용)."""
+    """대화의 지난 메시지(화면용). 답변 중이면 이번 사용자 메시지까지만 보여 준다(진행 중인 도구 단계는 /stream으로)."""
     thread = owned_thread(user, thread_id)
     agent, _ = get_agent()
-    state = agent.get_state(run_config(thread_id, user["user_id"]))
-    return {"thread": thread, "messages": history_messages((state.values or {}).get("messages", []))}
+    messages = (agent.get_state(run_config(thread_id, user["user_id"])).values or {}).get("messages", [])
+    run = runs.get_run(thread_id)
+    if run is not None:
+        last_human = max((i for i, m in enumerate(messages) if getattr(m, "type", "") == "human"), default=-1)
+        if last_human >= 0 and get_text(messages[last_human]) == run.content:
+            messages = messages[:last_human + 1]
+    return {"thread": thread, "messages": history_messages(messages), "running": run is not None}
 
 
 @app.post("/api/threads/{thread_id}/messages")
 def send_message(thread_id: str, body: MessageIn, user: dict = Depends(current_user)) -> StreamingResponse:
-    """메시지를 보내고 진행 단계(progress), 답변 초안 글자(delta·draft_reset), 최종 답변(done) 또는 오류(error)를 SSE로 돌려준다."""
+    """메시지를 보내 이 대화의 답변을 백그라운드로 시작하고, 그 진행을 SSE로 돌려준다(run_events).
+    이벤트: progress(진행 단계), delta·draft_reset(답변 초안 글자), 끝은 done(최종 답변)·error·stopped 중 하나.
+    연결이 끊겨도 답변은 끝까지 가고 /stream으로 다시 볼 수 있다. 이 대화가 이미 답변 중이면 409."""
     owned_thread(user, thread_id)
     content = (body.content or "").strip()
     if not content:
@@ -225,46 +247,80 @@ def send_message(thread_id: str, body: MessageIn, user: dict = Depends(current_u
     user_id = user["user_id"]
     agent, _ = get_agent()
 
-    def events():
-        """잠금을 얻을 때까지 '대기 중'을 보내고, 에이전트를 단계별로 실행하며 진행 단계와 답변 글자를 보낸 뒤 최종 답변을 보낸다.
+    def work(run: runs.Run) -> None:
+        """에이전트를 단계별로 실행하며 진행 단계와 답변 글자를 쌓고, 끝나면 최종 답변을 쌓는다. 멈춤 신호가 오면 다음 이벤트에서 멈춘다.
         글자(delta)는 답변 모델(model 노드)이 만드는 텍스트만이다(판정 모델·도구 인자 제외). 최종 답변은 턴 끝 처리
-        (링크 안내·📌·가격 출처·기억 알림)가 반영된 저장 상태라 초안과 다를 수 있어, 화면은 done이 오면 초안을 바꿔 끼운다."""
-        while not AGENT_LOCK.acquire(timeout=config.WEB_AGENT_WAIT_SECONDS):
-            yield sse("progress", {"stage": "다른 요청을 처리하는 중이라 잠시 기다리는 중"})
+        (링크 안내·📌·가격 출처·기억 알림)가 반영된 저장 상태라 초안과 다를 수 있어, 화면은 done이 오면 초안을 바꿔 끼운다.
+        중간에 멈춘 턴의 결과 없는 도구 호출은 다음 턴에 보정된다(T1-3)."""
         try:
             title = threads.touch_thread(user_id, thread_id, content)
             urls, _ = extract_urls(content)
-            yield sse("progress", {"stage": f"링크 {len(urls)}개 확인 중" if urls else "질문 확인 중", "title": title})
+            run.emit("progress", {"stage": f"링크 {len(urls)}개 확인 중" if urls else "질문 확인 중", "title": title})
             config_ = run_config(thread_id, user_id)
             writing = False  # 이번 모델 호출에서 글자를 보내기 시작했는지
-            for mode, item in agent.stream({"messages": [{"role": "user", "content": content}]}, config_,
-                                           context=AgentContext(user_id=user_id, channel="web"),
-                                           stream_mode=["updates", "messages"]):
-                if mode == "messages":
-                    chunk, meta = item
-                    text = draft_text(chunk) if meta.get("langgraph_node") == "model" else ""
-                    if text:
-                        if not writing:
-                            writing = True
-                            yield sse("progress", {"stage": "답변 작성 중"})
-                        yield sse("delta", {"text": text})
-                    continue
-                if calls_tools(item):  # 도구를 부르기 전의 짧은 글('찾아볼게요')은 답변이 아니므로 초안에서 지운다
-                    if writing:
-                        yield sse("draft_reset", {})
-                    writing = False
-                for stage in progress_stages(item):
-                    if stage != "답변 정리 중":  # 글자 스트리밍 중이면 '답변 작성 중'이 이미 표시된다
-                        yield sse("progress", {"stage": stage})
-            final = agent.get_state(config_).values["messages"][-1]
-            yield sse("done", {"answer": get_text(final), "title": title})
+            stream = agent.stream({"messages": [{"role": "user", "content": content}]}, config_,
+                                  context=AgentContext(user_id=user_id, channel="web"), stream_mode=["updates", "messages"])
+            try:
+                for mode, item in stream:
+                    if run.cancel.is_set():
+                        run.emit("stopped", {"message": runs.STOPPED_MESSAGE, "title": title})
+                        return
+                    if mode == "messages":
+                        chunk, meta = item
+                        text = draft_text(chunk) if meta.get("langgraph_node") == "model" else ""
+                        if text:
+                            if not writing:
+                                writing = True
+                                run.emit("progress", {"stage": "답변 작성 중"})
+                            run.emit("delta", {"text": text})
+                        continue
+                    if calls_tools(item):  # 도구를 부르기 전의 짧은 글('찾아볼게요')은 답변이 아니므로 초안에서 지운다
+                        if writing:
+                            run.emit("draft_reset", {})
+                        writing = False
+                    for stage in progress_stages(item):
+                        if stage != "답변 정리 중":  # 글자 스트리밍 중이면 '답변 작성 중'이 이미 표시된다
+                            run.emit("progress", {"stage": stage})
+            finally:
+                stream.close()  # 멈췄을 때 그래프 실행을 바로 정리한다
+            messages = agent.get_state(config_).values["messages"]
+            final = answer_view(messages[-1], messages)
+            run.emit("done", {"answer": final["content"], "title": title,
+                              **({"itinerary": final["itinerary"]} if "itinerary" in final else {})})
         except Exception as e:
             logger.exception("웹 답변 실패", extra={"event": "web_agent_error", "data": {"thread_id": thread_id}})
-            yield sse("error", {"message": error_message(e)})
-        finally:
-            AGENT_LOCK.release()
+            run.emit("error", {"message": error_message(e)})
 
-    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+    try:
+        run = runs.start_run(thread_id, user_id, content, work)
+    except runs.RunBusy:
+        raise HTTPException(status_code=409, detail="이 대화는 아직 답변 중입니다. 끝나거나 멈춘 뒤 보내 주세요.") from None
+    return run_events(run)
+
+
+def run_events(run: runs.Run) -> StreamingResponse:
+    """실행의 이벤트를 처음부터 SSE로 내보낸다. 오래 조용하면 연결 유지 주석을 보낸다. 끊겨도 실행에는 영향이 없다."""
+    def body():
+        for item in run.subscribe():
+            yield ": keepalive\n\n" if item is None else sse(*item)
+    return StreamingResponse(body(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/threads/{thread_id}/stream")
+def follow_run(thread_id: str, user: dict = Depends(current_user)) -> StreamingResponse:
+    """답변 중인 대화의 진행을 처음부터 다시 받는다(새로고침·다른 대화를 보다 돌아왔을 때). 답변 중이 아니면 404."""
+    owned_thread(user, thread_id)
+    run = runs.get_run(thread_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="진행 중인 답변이 없습니다.")
+    return run_events(run)
+
+
+@app.post("/api/threads/{thread_id}/stop")
+def stop_answer(thread_id: str, user: dict = Depends(current_user)) -> dict:
+    """답변을 멈춘다(다음 단계에서 멈추고 stopped 이벤트를 보낸다). 답변 중이 아니었으면 stopped=False."""
+    owned_thread(user, thread_id)
+    return {"stopped": runs.stop_run(thread_id)}
 
 
 # ---------- 저장한 링크 (SERVICE 2.10 링크 패널) ----------

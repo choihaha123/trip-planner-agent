@@ -2,6 +2,8 @@
 # 실행: python -m unittest discover tests
 # 실제 storage/web.sqlite 대신 임시 폴더의 DB를 쓴다. Bedrock은 호출하지 않는다.
 import tempfile
+import threading
+import time
 import unittest
 from contextlib import closing
 from datetime import timedelta
@@ -21,7 +23,7 @@ from src import config, memory
 from src.agent import AgentContext, system_prompt_with_date
 from src.middleware import UrlOutcome
 from src.web import app as web_app
-from src.web import auth, threads
+from src.web import auth, runs, threads
 from src.web.app import app
 
 
@@ -236,14 +238,14 @@ class TestThreadsApi(ChatTestCase):
         self.assertEqual(self.send(thread_id, "   ")[0].status_code, 400)
         self.assertEqual(self.send(thread_id, "가" * (config.WEB_MESSAGE_MAX_CHARS + 1))[0].status_code, 400)
 
-    def test_error_event_and_lock_released(self):
-        """에이전트가 실패하면 error 이벤트로 원인별 안내를 보내고, 잠금이 풀려 다음 메시지는 정상 처리된다."""
+    def test_error_event_and_run_released(self):
+        """에이전트가 실패하면 error 이벤트로 원인별 안내를 보내고, 실행이 목록에서 빠져 다음 메시지는 정상 처리된다."""
         thread_id = self.client.post("/api/threads").json()["thread_id"]
         with patch.object(self.agent, "stream", side_effect=RuntimeError("boom")):
             _, events = self.send(thread_id, "안녕")
         self.assertEqual(events[-1][0], "error")
         self.assertIn("/new", events[-1][1]["message"])
-        self.assertFalse(web_app.AGENT_LOCK.locked())
+        self.assertIsNone(runs.get_run(thread_id))
         self.assertEqual(self.send(thread_id, "오사카 저녁 메뉴")[1][-1][0], "done")
 
     def test_delete_removes_list_and_history(self):
@@ -253,6 +255,18 @@ class TestThreadsApi(ChatTestCase):
         self.assertEqual(self.client.delete(f"/api/threads/{thread_id}").json(), {"ok": True})
         self.assertEqual(self.client.get("/api/threads").json(), [])
         self.assertIsNone(self.saver.get_tuple({"configurable": {"thread_id": thread_id}}))
+
+    def test_history_attaches_itinerary_card(self):
+        """최종 답변이 일정표(render_itinerary 결과)면 지난 메시지에 카드 데이터(itinerary)를 붙이고, 일반 답변엔 붙이지 않는다. (R5-5)"""
+        from langchain_core.messages import HumanMessage, ToolMessage
+        artifact = {"title": "교토 당일", "destination": "교토", "nights": 0, "people": 1, "origin": "서울", "start_date": "",
+                    "days": [{"day": 1, "items": [{"time": "오전", "place": "금각사"}]}], "sources": {}, "budget": None}
+        shown = web_app.history_messages([HumanMessage("교토 일정 짜줘"),
+                                          ToolMessage("# 교토 당일", tool_call_id="c1", name="render_itinerary", artifact=artifact),
+                                          HumanMessage("고마워"), AIMessage("천만에요")])
+        self.assertEqual(shown[1]["itinerary"]["days"][0]["items"][0]["place"], "금각사")
+        self.assertEqual(shown[1]["content"], "# 교토 당일")                    # 줄글은 '글로 보기'용으로 그대로
+        self.assertNotIn("itinerary", shown[3])
 
     def test_requires_login(self):
         """로그인하지 않으면 대화 API는 401."""
@@ -273,6 +287,159 @@ class TestThreadsApi(ChatTestCase):
         long = threads.make_title("가" * 50)
         self.assertEqual(len(long), config.WEB_TITLE_MAX_CHARS + 1)
         self.assertTrue(long.endswith("…"))
+
+
+GATE = threading.Event()  # GateModel이 '느린' 질문의 답을 붙잡아 두는 문
+
+
+class GateModel(FakeModel):
+    """질문에 '느린'이 있으면 첫 글자 조각을 보낸 뒤 GATE가 열릴 때까지 기다리고, 아니면 바로 답하는 가짜 모델(동시 실행 시험용)."""
+
+    def _stream(self, messages, stop=None, run_manager=None, **kwargs):
+        """질문에 따라 바로 또는 GATE를 기다렸다가 답한다."""
+        from langchain_core.messages import AIMessageChunk
+        from langchain_core.outputs import ChatGenerationChunk
+        slow = "느린" in str(messages[-1].content)
+        pieces = ["느린 ", "답변"] if slow else ["빠른 ", "답변"]
+        for i, piece in enumerate(pieces):
+            if slow and i == 1:
+                GATE.wait(10)
+            chunk = ChatGenerationChunk(message=AIMessageChunk(content=piece))
+            if run_manager:
+                run_manager.on_llm_new_token(piece, chunk=chunk)
+            yield chunk
+
+
+class TestBackgroundRuns(WebTestCase):
+    """대화별 백그라운드 실행: 서로 안 기다림, 다시 구독, 중복 전송 409, 중지, 답변 중 삭제. (Phase 7 R4)"""
+
+    def setUp(self):
+        super().setUp()
+        GATE.clear()
+        self.addCleanup(GATE.set)  # 실패해도 붙잡힌 실행이 남지 않게
+        self.saver = InMemorySaver()
+        self.agent = create_agent(model=GateModel(messages=iter([])), tools=[], checkpointer=self.saver,
+                                  context_schema=AgentContext)
+        patcher = patch.object(web_app, "get_agent", return_value=(self.agent, self.saver))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.signup("a@example.com")
+
+    def new_thread(self) -> str:
+        """새 대화를 만든다."""
+        return self.client.post("/api/threads").json()["thread_id"]
+
+    def start_slow(self, thread_id: str) -> dict:
+        """'느린' 질문을 다른 스레드에서 보내고, 첫 글자 조각이 쌓일 때까지(=GATE에서 기다리는 중) 기다린다."""
+        box = {}
+        worker = threading.Thread(target=lambda: box.update(
+            res=self.client.post(f"/api/threads/{thread_id}/messages", json={"content": "느린 질문"})))
+        worker.start()
+        for _ in range(200):
+            run = runs.get_run(thread_id)
+            if run and any(e == "delta" for e, _ in run.events):
+                break
+            time.sleep(0.02)
+        box["worker"] = worker
+        return box
+
+    def test_other_thread_not_blocked(self):
+        """한 대화가 답변 중이어도 다른 대화는 기다리지 않고 바로 답한다(전엔 서버 전체 잠금 하나로 줄을 섰다)."""
+        slow_id, fast_id = self.new_thread(), self.new_thread()
+        box = self.start_slow(slow_id)
+        res = self.client.post(f"/api/threads/{fast_id}/messages", json={"content": "빠른 질문"})
+        self.assertEqual(parse_sse(res.text)[-1], ("done", {"answer": "빠른 답변", "title": "빠른 질문"}))
+        self.assertIsNotNone(runs.get_run(slow_id))                          # 느린 대화는 아직 답변 중
+        self.assertEqual({t["thread_id"]: t["running"] for t in self.client.get("/api/threads").json()},
+                         {slow_id: True, fast_id: False})
+        GATE.set()
+        box["worker"].join(5)
+        self.assertEqual(parse_sse(box["res"].text)[-1][0], "done")
+
+    def test_busy_follow_and_history(self):
+        """답변 중인 대화에 또 보내면 409. 다시 구독하면 처음부터 재생해 끝까지 받고, 지난 메시지는 이번 질문까지만 보인다."""
+        thread_id = self.new_thread()
+        box = self.start_slow(thread_id)
+        busy = self.client.post(f"/api/threads/{thread_id}/messages", json={"content": "또"})
+        self.assertEqual(busy.status_code, 409)
+        history = self.client.get(f"/api/threads/{thread_id}/messages").json()
+        self.assertTrue(history["running"])
+        self.assertEqual(history["messages"][-1], {"role": "user", "content": "느린 질문"})
+        threading.Timer(0.3, GATE.set).start()
+        events = parse_sse(self.client.get(f"/api/threads/{thread_id}/stream").text)
+        self.assertEqual(events[0][0], "progress")                           # 처음 이벤트부터 재생
+        self.assertEqual(events[-1], ("done", {"answer": "느린 답변", "title": "느린 질문"}))
+        box["worker"].join(5)
+        self.assertEqual(self.client.get(f"/api/threads/{thread_id}/stream").status_code, 404)  # 끝나면 진행 중 없음
+
+    def test_stop_then_continue(self):
+        """중지하면 stopped로 끝나고 실행이 빠지며, 같은 대화에 다음 메시지를 보내면 정상으로 이어진다."""
+        thread_id = self.new_thread()
+        box = self.start_slow(thread_id)
+        self.assertEqual(self.client.post(f"/api/threads/{thread_id}/stop").json(), {"stopped": True})
+        GATE.set()
+        box["worker"].join(5)
+        self.assertEqual(parse_sse(box["res"].text)[-1][0], "stopped")
+        self.assertIsNone(runs.get_run(thread_id))
+        res = self.client.post(f"/api/threads/{thread_id}/messages", json={"content": "빠른 질문"})
+        self.assertEqual(parse_sse(res.text)[-1][1]["answer"], "빠른 답변")
+        self.assertEqual(self.client.post(f"/api/threads/{thread_id}/stop").json(), {"stopped": False})
+
+    def test_delete_while_running(self):
+        """답변 중인 대화를 지우면 먼저 멈추고 끝나기를 기다린 뒤 목록·기록을 지운다(지운 뒤 기록이 되살아나지 않음)."""
+        thread_id = self.new_thread()
+        box = self.start_slow(thread_id)
+        threading.Timer(0.3, GATE.set).start()
+        self.assertEqual(self.client.delete(f"/api/threads/{thread_id}").json(), {"ok": True})
+        box["worker"].join(5)
+        self.assertIsNone(runs.get_run(thread_id))
+        self.assertEqual(self.client.get("/api/threads").json(), [])
+        self.assertIsNone(self.saver.get_tuple({"configurable": {"thread_id": thread_id}}))
+
+
+class TestRealAgentStack(WebTestCase):
+    """웹 대화를 운영과 같은 build_agent(미들웨어 전부)로 돌린다. 모델만 가짜로 바꾼다. (Phase 7 R3-4: 전엔 맨 에이전트로만 시험했다)"""
+
+    def setUp(self):
+        super().setUp()
+        from src import agent as agent_module
+        from src import middleware
+        self.model = FakeModel(messages=iter([AIMessage("오사카 저녁엔 도톤보리 오코노미야키를 추천해요")]))
+        for target, name, value in ((agent_module, "make_llm", self.model), (agent_module, "make_fallback_llms", [])):
+            patcher = patch.object(target, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        store = memory.open_memory_store(":memory:")  # 기억 저장소는 실제 파일 대신 임시
+        for patcher in (patch.object(memory, "get_memory_store", return_value=store),
+                        patch.object(middleware, "process_urls", side_effect=lambda urls, user_id: [
+                            UrlOutcome(u, "saved", "센소지 후기") for u in urls])):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.saver = InMemorySaver()
+        patcher = patch.object(web_app, "get_agent", return_value=(agent_module.build_agent(self.saver), self.saver))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.signup("a@example.com")
+
+    def send(self, content: str) -> list:
+        """새 대화에 메시지를 보내 SSE 이벤트 목록을 돌려준다."""
+        thread_id = self.client.post("/api/threads").json()["thread_id"]
+        return parse_sse(self.client.post(f"/api/threads/{thread_id}/messages", json={"content": content}).text)
+
+    def test_streams_through_production_middleware(self):
+        """일반 답변: 운영 미들웨어를 모두 거쳐도 글자 조각(delta)이 오고, 최종 답변(done)이 저장 상태 그대로 온다."""
+        events = self.send("오사카 저녁 메뉴 하나만 추천해줘")
+        self.assertGreater(sum(1 for e, _ in events if e == "delta"), 1)
+        self.assertEqual(events[-1][0], "done")
+        self.assertEqual(events[-1][1]["answer"], "오사카 저녁엔 도톤보리 오코노미야키를 추천해요")
+
+    def test_url_only_message_answered_by_middleware(self):
+        """링크만 보낸 메시지: URL 전처리 미들웨어가 모델 없이 고정 답을 내고, 턴 끝에 '링크 처리 결과'가 붙는다."""
+        events = self.send("https://blog.example/senso 저장해줘")
+        answer = events[-1][1]["answer"]
+        self.assertIn("링크 1개를 저장해 두었습니다", answer)
+        self.assertIn("※ 링크 처리 결과", answer)
+        self.assertIn("✔ 저장함: 센소지 후기", answer)
 
 
 class TestLinksApi(WebTestCase):

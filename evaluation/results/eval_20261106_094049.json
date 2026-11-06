@@ -1,0 +1,163 @@
+{
+  "run_at": "2026-11-06T09:40:49",
+  "summary": {
+    "total": 3,
+    "passed": 3,
+    "pass_rate": 1.0,
+    "by_category": {
+      "positive": {
+        "total": 2,
+        "passed": 2
+      },
+      "edge": {
+        "total": 1,
+        "passed": 1
+      }
+    },
+    "guardrail_all_passed": true,
+    "overall_pass": true,
+    "criteria": "통과율 80% 이상 + guardrail 전부 통과"
+  },
+  "results": [
+    {
+      "id": "1",
+      "category": "positive",
+      "input": "교토 2박3일 일정 짜줘. 혼자 인천에서 출발하고 다음 주 금요일에 떠나. 예산은 1인 80만원이야. 나머지는 알아서 해줘.",
+      "answer": "가정한 조건: 꼭 가고 싶은 곳은 교토 대표 명소(금각사, 청수사, 후시미이나리)로 선정, 여행 스타일은 적당한 속도(하루 3~4곳)로 가정, 관심사는 대표 관광·음식 위주로 가정\n\n# 교토 2박3일 일정\n교토 · 2박3일 (2026-11-13(금) ~ 2026-11-15(일)) · 1명 · 인천 출발\n\n## 1일차 2026-11-13(금)\n- 오전 인천국제공항 · 인천공항 출발\n- 오후 간사이 국제공항 · 간사이 공항 도착 후 JR 하루카 탑승\n  이동: 항공편 약 2시간\n  출처: 교토 가는 방법 | 교토 여행 (https://kyoto.travel/ko/getting-to/)\n- 오후 교토역 · 교토역 도착, 숙소 체크인\n  이동: JR 하루카 약 80분\n  출처: 교토 가는 방법 | 교토 여행 (https://kyoto.travel/ko/getting-to/)\n- 오후 후시미이나리 신사 · 후시미이나리 신사 방문 - 천 개의 붉은 토리이\n  이동: JR 나라선 약 5분\n  입장료: 무료 (출처 없음, 사용자 확인 필요)\n  출처: 교토 가볼만한곳 후시미 이나리 신사 가는법 입장료 정상 소요시간 : 네이버 블로그 (https://m.blog.naver.com/c131444/223792292324)\n- 저녁 교토역 주변 · 교토역 주변 저녁 식사 (라멘 또는 이자카야)\n  출처: 교토 가이세키 (https://www.instagram.com/popular/%EA%B5%90%ED%86%A0-%EA%B0%80%EC%9D%B4%EC%84%B8%ED%82%A4)\n  ▶ 1일차 비용(대략치): 64,702~91,629 KRW\n\n## 2일차 2026-11-14(토)\n- 오전 금각사 (킨카쿠지) · 금각사 방문 - 금빛 누각과 정원\n  이동: 시내버스 12번/205번 약 45분\n  입장료: 500 JPY\n  입장료 출처: 교토 '금각사', 입장료 30년만에 인상… (https://www.yna.co.kr/view/AKR20230107038300073)\n  출처: 교토 여행 가볼만한 곳, 금각사(킨카쿠지) 입장료 가는법 후기 (https://chloelife.tistory.com/entry/%EA%B5%90%ED%86%A0-%EA%B0%80%EB%B3%BC%EB%A7%8C%ED%95%9C-%EA%B3%B3-%EA%B8%88%EA%B0%81%EC%82%AC%ED%82%A8%EC%B9%B4%EC%BF%A0%EC%A7%80-%EA%B0%80%EB%8A%94-%EB%B0%A9%EB%B2%95%EA%B3%BC-%EC%9E%85%EC%9E%A5%EB%A3%8C-%EC%9E%85%EC%9E%A5%EC%8B%9C%EA%B0%84-%EC%A0%95%EB%B3%B4-1)\n- 오전 니조성 · 니조성 또는 기타노텐만구 방문\n  이동: 시내버스 약 20분\n  출처: 교토 교통편 | 교토 여행 (https://kyoto.travel/ko/getting-around/)\n- 점심 니시키 시장 · 니시키 시장에서 점심 식사 및 구경\n  이동: 시내버스 약 15분\n  출처: 교토 | 간사이 | 목적지 | Travel Japan - 일본정부관광국(공식 홈페이지) (https://www.japan.travel/ko/destinations/kansai/kyoto/)\n- 오후 청수사 (기요미즈데라) · 청수사 방문 - 나무 기둥 위의 본당과 교토 전망\n  이동: 시내버스 100번/206번 약 20분\n  입장료: 500 JPY\n  입장료 출처: 일본 교토 가볼만한곳 기요미즈데라 입장료 청수사 평일 오후 : 네이버 블로그 (https://m.blog.naver.com/overroad89/223795825970)\n  출처: 일본 교토 가볼만한곳 기요미즈데라 입장료 청수사 평일 오후 : 네이버 블로그 (https://m.blog.naver.com/overroad89/223795825970)\n- 오후 니넨자카·산넨자카 · 니넨자카·산넨자카 산책 및 기념품 쇼핑\n  출처: 일본 교토 가볼만한곳 기요미즈데라 입장료 청수사 평일 오후 : 네이버 블로그 (https://m.blog.naver.com/overroad89/223795825970)\n- 저녁 기온 · 기온 거리 산책 및 저녁 식사\n  이동: 도보 약 15분\n  출처: 교토 교통편 | 교토 여행 (https://kyoto.travel/ko/getting-around/)\n  ▶ 2일차 비용(대략치): 73,166~100,093 KRW\n\n## 3일차 2026-11-15(일)\n- 오전 아라시야마 · 아라시야마 대나무숲 산책\n  이동: JR 사가노선 약 15분\n  출처: 교토 | 간사이 | 목적지 | Travel Japan - 일본정부관광국(공식 홈페이지) (https://www.japan.travel/ko/destinations/kansai/kyoto/)\n- 오전 도게츠교 · 도게츠교 다리 및 주변 산책\n  출처: 교토 | 간사이 | 목적지 | Travel Japan - 일본정부관광국(공식 홈페이지) (https://www.japan.travel/ko/destinations/kansai/kyoto/)\n- 점심 아라시야마 · 아라시야마에서 점심 식사 (소바 또는 우동)\n  출처: 교토 가이세키 (https://www.instagram.com/popular/%EA%B5%90%ED%86%A0-%EA%B0%80%EC%9D%B4%EC%84%B8%ED%82%A4)\n- 오후 교토역 · 교토역으로 이동, 마지막 쇼핑 및 간식\n  이동: JR 사가노선 약 15분\n- 오후 간사이 국제공항 · 간사이 공항으로 이동\n  이동: JR 하루카 약 80분\n  출처: 교토 가는 방법 | 교토 여행 (https://kyoto.travel/ko/getting-to/)\n- 저녁 인천국제공항 · 인천공항 도착\n  이동: 항공편 약 2시간\n  ▶ 3일차 비용(대략치): 34,702~51,629 KRW\n\n## 참고\n- 날씨: 11/13(금) 흐림 19°C/7°C, 11/14(토) 흐림 18°C/9°C, 11/15(일) 약한 소나기 16°C/9°C - 우산 준비 권장 (출처: Open-Meteo)\n- 교토 시내 교통은 지하철·버스 1일권(1,100엔 (출처 없음, 사용자 확인 필요)) 활용 추천\n- 후시미이나리 신사는 입장료 무료, 24시간 개방\n- 금각사·청수사는 현금 결제만 가능하니 엔화 준비 필수\n- 아침 일찍 방문하면 관광객이 적어 사진 찍기 좋음\n\n## 예산 요약\n[예산 계산 · 대략치] 인원 1명, 2박3일, 객실 1개\n항목별:\n- 항공 왕복 [1인 1회] 200,000~300,000 KRW × 1 = 200,000~300,000 KRW (근거: 출처: 땡처리 항공권 인천 국제 - 교토 실시간 예매 I 스카이스캐너 https://www.skyscanner.co.kr/routes/icn/juky/incheon-international-to-kyoto.html)\n- 숙박 (게스트하우스) [객실 1박] 30,000~40,000 KRW × 2 = 60,000~80,000 KRW (근거: 출처: 교토 게스트하우스 - 호스텔, 교토 | 호텔스컴바인 (Kyoto Guesthouse - Hostel) https://www.hotelscombined.co.kr/Hotel/Kyoto_Guesthouse.htm)\n- 간사이공항-교토 하루카 [1인 1회] 27,084 KRW × 1 = 27,084 KRW (근거: 출처: 교토 가는 방법 | 교토 여행 https://kyoto.travel/ko/getting-to/)\n- 교토 시내 교통 (버스/지하철 1일권) [1인 1일] 9,310 KRW × 3 = 27,931 KRW (근거: 출처: 교토 교통편 | 교토 여행 https://kyoto.travel/ko/getting-around/)\n- 식비 [1인 1일] 25,392~42,319 KRW × 3 = 76,175~126,958 KRW (근거: LLM 추정치(출처 없음, 사용자 확인 필요))\n- 금각사 입장료 [1인 1회, 2일차] 4,232 KRW × 1 = 4,232 KRW (근거: 출처: 교토 '금각사', 입장료 30년만에 인상… https://www.yna.co.kr/view/AKR20230107038300073)\n- 청수사 입장료 [1인 1회, 2일차] 4,232 KRW × 1 = 4,232 KRW (근거: 출처: 일본 교토 가볼만한곳 기요미즈데라 입장료 청수사 평일 오후 : 네이버 블로그 https://m.blog.naver.com/overroad89/223795825970)\n일자별:\n- 1일차: 64,702~91,629 KRW\n- 2일차: 73,166~100,093 KRW\n- 3일차: 34,702~51,629 KRW\n- 여행 전체(항공 등 일자 무관): 227,084~327,084 KRW\n합계: 일행 총액 399,653~570,436 KRW / 1인당 399,653~570,436 KRW\n예산 판정(1인 예산 800,000 KRW, 최대값 기준): 예산 안 (최대값 기준 229,564 KRW 여유)\n적용 환율: 1 JPY = 8.46384 KRW (출처: Rates By Exchange Rate API (https://www.exchangerate-api.com))\n\n## 출처\n- 교토 가는 방법 | 교토 여행 (https://kyoto.travel/ko/getting-to/)\n- 교토 가볼만한곳 후시미 이나리 신사 가는법 입장료 정상 소요시간 : 네이버 블로그 (https://m.blog.naver.com/c131444/223792292324)\n- 교토 가이세키 (https://www.instagram.com/popular/%EA%B5%90%ED%86%A0-%EA%B0%80%EC%9D%B4%EC%84%B8%ED%82%A4)\n- 교토 '금각사', 입장료 30년만에 인상… (https://www.yna.co.kr/view/AKR20230107038300073)\n- 교토 여행 가볼만한 곳, 금각사(킨카쿠지) 입장료 가는법 후기 (https://chloelife.tistory.com/entry/%EA%B5%90%ED%86%A0-%EA%B0%80%EB%B3%BC%EB%A7%8C%ED%95%9C-%EA%B3%B3-%EA%B8%88%EA%B0%81%EC%82%AC%ED%82%A8%EC%B9%B4%EC%BF%A0%EC%A7%80-%EA%B0%80%EB%8A%94-%EB%B0%A9%EB%B2%95%EA%B3%BC-%EC%9E%85%EC%9E%A5%EB%A3%8C-%EC%9E%85%EC%9E%A5%EC%8B%9C%EA%B0%84-%EC%A0%95%EB%B3%B4-1)\n- 교토 교통편 | 교토 여행 (https://kyoto.travel/ko/getting-around/)\n- 교토 | 간사이 | 목적지 | Travel Japan - 일본정부관광국(공식 홈페이지) (https://www.japan.travel/ko/destinations/kansai/kyoto/)\n- 일본 교토 가볼만한곳 기요미즈데라 입장료 청수사 평일 오후 : 네이버 블로그 (https://m.blog.naver.com/overroad89/223795825970)",
+      "tools": [
+        "check_trip_info",
+        "resolve_dates",
+        "search_travel_info",
+        "search_travel_info",
+        "search_travel_info",
+        "search_travel_info",
+        "search_travel_info",
+        "search_travel_info",
+        "search_travel_info",
+        "search_travel_info",
+        "search_travel_info",
+        "get_weather",
+        "calculate_budget",
+        "render_itinerary",
+        "render_itinerary"
+      ],
+      "checks": [
+        {
+          "type": "tool",
+          "item": "check_trip_info",
+          "passed": true,
+          "reason": "호출된 도구: ['check_trip_info', 'resolve_dates', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'get_weather', 'calculate_budget', 'render_itinerary', 'render_itinerary']"
+        },
+        {
+          "type": "tool",
+          "item": "resolve_dates",
+          "passed": true,
+          "reason": "호출된 도구: ['check_trip_info', 'resolve_dates', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'get_weather', 'calculate_budget', 'render_itinerary', 'render_itinerary']"
+        },
+        {
+          "type": "tool",
+          "item": "render_itinerary",
+          "passed": true,
+          "reason": "호출된 도구: ['check_trip_info', 'resolve_dates', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'search_travel_info', 'get_weather', 'calculate_budget', 'render_itinerary', 'render_itinerary']"
+        },
+        {
+          "type": "trait",
+          "item": "1일차",
+          "passed": true,
+          "reason": ""
+        },
+        {
+          "type": "trait",
+          "item": "2일차",
+          "passed": true,
+          "reason": ""
+        },
+        {
+          "type": "trait",
+          "item": "3일차",
+          "passed": true,
+          "reason": ""
+        },
+        {
+          "type": "trait",
+          "item": "이동:",
+          "passed": true,
+          "reason": ""
+        },
+        {
+          "type": "trait",
+          "item": "출처",
+          "passed": true,
+          "reason": ""
+        }
+      ],
+      "passed": true,
+      "error": "",
+      "seconds": 87.9
+    },
+    {
+      "id": "7",
+      "category": "positive",
+      "input": "이 블로그 참고해서 센소지 중심으로 아사쿠사 반나절 코스 추천해줘 https://blog.naver.com/soojchun/223565608898",
+      "answer": "블로그 자료를 참고해서 센소지를 중심으로 한 아사쿠사 반나절 코스를 추천해 드릴게요!\n\n## 🏮 아사쿠사 반나절 코스 (4~5시간)\n\n### **오전 일찍 출발 추천!**\n센소지는 도쿨에서 가장 붐비는 관광지이므로 이른 아침 방문을 추천드려요.\n\n---\n\n### **📍 코스 순서**\n\n**1. 가미나리몬 (雷門) - 오전 7시~8시**\n- 높이 4m, 무게 700kg의 거대한 빨간 등불이 있는 센소지 입구\n- 유명한 포토존! 천둥신, 바람신 동상도 함께 구경\n- 이른 시간이라 사람이 적어 사진 찍기 좋아요\n\n**2. 나카미세도리 거리 - 오전 8시~9시**\n- 가미나리몬부터 센소지 본당까지 이어지는 상점가\n- 기념품 쇼핑: 한자 티셔츠, 전통 부채, 가면, 목각인형 등\n- 간식 즐기기: 모찌, 눈앞에서 구워주는 과자 등\n- 기모노 대여도 가능 (사진 찍기 좋아요)\n\n**3. 센소지 본당 - 오전 9시~10시**\n- **입장료**: 무료\n- **운영시간**: 하계(4~9월) 06:00~17:00 / 동계(10~3월) 06:30~17:00\n- 향을 피우며 기도하는 체험\n- 오미쿠지(운세 뽑기) 체험\n- 일본에서 가장 오래된 절 중 하나 (약 1,300~1,400년 역사)\n\n**4. 주변 선택 코스 - 오전 10시~12시**\n\n**옵션 A: 스미다 강변 산책**\n- 아즈마바시 다리에서 도쿄 스카이트리 조망\n- 수상버스 타고 크루징 (히노데 부두, 오다이바까지 가능)\n\n**옵션 B: 갓파바시 도구 거리**\n- 전문가용 주방용품과 식품 샘플 구경\n- 독특한 기념품 쇼핑\n\n**옵션 C: 아사쿠사 하나야시키**\n- 일본 전통 테마파크\n- 고색창연한 분위기의 놀이기구\n\n---\n\n### **🚇 가는 법**\n- **지하철**: 긴자선 아사쿠사역, 아사쿠사선 아사쿠사역\n- 역에서 도보 5분 거리로 접근성 좋음\n\n### **💡 팁**\n- 이른 아침 방문 후 근처 카페나 음식점에서 브런치 즐기기\n- 일본 전통 음식점이 많아 맛집 탐방도 추천\n- 도쿄 스카이트리가 가까워 함께 방문하기 좋아요\n\n출처: 📌 내가 저장한 자료 (11/06 저장) [도쿄 아사쿠사 센소지 입장료 시간 가는법 근처 놀거리 : 네이버 블로그](https://blog.naver.com/soojchun/223565608898), [아사쿠사 / 도쿄 관광 공식 사이트GO TOKYO](https://www.gotokyo.org/kr/destinations/eastern-tokyo/asakusa/index.html)\n\n※ 링크 처리 결과\n- ✔ 저장함: 도쿄 아사쿠사 센소지 입장료 시간 가는법 근처 놀거리 : 네이버 블로그 (https://blog.naver.com/soojchun/223565608898)",
+      "tools": [
+        "search_travel_info"
+      ],
+      "checks": [
+        {
+          "type": "tool",
+          "item": "search_travel_info",
+          "passed": true,
+          "reason": "호출된 도구: ['search_travel_info']"
+        },
+        {
+          "type": "trait",
+          "item": "blog.naver.com/soojchun/223565608898",
+          "passed": true,
+          "reason": ""
+        },
+        {
+          "type": "forbidden",
+          "item": "✖ 못 씀",
+          "passed": true,
+          "reason": ""
+        }
+      ],
+      "passed": true,
+      "error": "",
+      "seconds": 27.5
+    },
+    {
+      "id": "15",
+      "category": "edge",
+      "input": "후쿠오카 여행 일정 짜줘.",
+      "answer": "후쿠오카 여행 일정을 만들어 드릴게요! 몇 가지 여쭤볼게요.\n\n**필수 정보:**\n- 여행 기간은 몇 박 며칠인가요?\n- 인원은 몇 명인가요?\n- 출발지는 어디인가요? (예: 인천, 김포, 부산 등)\n- 예산은 얼마나 생각하고 계신가요?\n\n**맞춤 일정을 위한 질문** (모르시면 알아서 정할게요):\n- 꼭 가고 싶은 곳이나 이미 정한 일정이 있나요?\n- 여행 스타일은 어떤 걸 선호하세요? (여유롭게 / 많이 보기)\n- 관심사는 무엇인가요? (음식, 쇼핑, 사찰, 자연, 사진 등)\n\n알려주시면 바로 일정을 만들어 드릴게요! 😊",
+      "tools": [
+        "check_trip_info"
+      ],
+      "checks": [
+        {
+          "type": "tool",
+          "item": "check_trip_info",
+          "passed": true,
+          "reason": "호출된 도구: ['check_trip_info']"
+        },
+        {
+          "type": "trait_llm",
+          "item": "~일정을 바로 만들지 않고 빠진 정보(기간·인원·출발지·예산 등)를 한 번에 물어봄",
+          "passed": true,
+          "reason": "에이전트가 일정을 바로 만들지 않고, 필수 정보(기간, 인원, 출발지, 예산)를 한 번에 체계적으로 물어봤습니다. 추가로 맞춤 일정을 위한 선택적 질문도 포함하여 기준을 충분히 만족합니다."
+        },
+        {
+          "type": "forbidden",
+          "item": "1일차",
+          "passed": true,
+          "reason": ""
+        }
+      ],
+      "passed": true,
+      "error": "",
+      "seconds": 11.9
+    }
+  ]
+}

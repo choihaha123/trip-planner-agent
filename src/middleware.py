@@ -4,6 +4,7 @@
 import logging
 import re
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
@@ -17,7 +18,7 @@ from typing_extensions import NotRequired
 
 from src import config, retriever
 from src.collector import CollectResult, collect
-from src.tools import SOURCE_SAVED
+from src.tools import SOURCE_SAVED, reference_attrs
 
 logger = logging.getLogger(__name__)
 
@@ -38,18 +39,33 @@ JUDGE_SYSTEM_PROMPT = (
     "- reason: 한 문장으로 쓴다."
 )
 
-# 파이썬 지시문 검사: 본문 전체에서 AI를 향한 지시 문구를 찾는다. (LLM은 앞부분만 보므로 뒤쪽에 숨긴 지시문 대비)
+# 파이썬 지시문 검사: 제목과 본문 전체에서 AI를 향한 지시 문구를 찾는다. (LLM은 앞·끝 일부만 보므로 중간에 숨긴 지시문 대비)
+# 2026-11-06 R3-1 보강: QA가 시험한 우회 표현 11개 중 9개를 놓쳐 영어·한국어 표현을 늘리고, 비교 전에 정규화한다.
+_AI_WORD = r"(?:AI|에이아이|LLM|GPT|챗봇|어시스턴트|인공지능|언어\s*모델|assistants?|chatbots?|language\s+models?)"
 INSTRUCTION_PATTERNS = [
-    r"ignore\s+(all\s+|any\s+)?(the\s+)?(previous|prior|above)\s+(instructions|prompts?)",
+    r"ignore\s+(all\s+|any\s+)?(the\s+|your\s+)?(previous|prior|above|earlier)\s+(instructions|prompts?|directions)",
+    r"ignore\s+(all\s+|any\s+)?(the\s+|your\s+)?(instructions|prompts?)\s+(above|before|given)",
     r"disregard\s+(all\s+|the\s+)?(previous|prior|above)",
+    r"forget\s+(everything|all)\s+(you|that)\s+(were|was|have\s+been)\s+told",
+    r"(note|message|instructions?)\s+(to|for)\s+(ai|llms?|assistants?|chatbots?|language\s+models?)",
+    r"if\s+you\s+are\s+an?\s+(ai|llm|language\s+model|assistant)",
     r"(system|developer)\s+prompt",
     r"you\s+are\s+now\s+(a|an|the)\b",
-    r"(이전|앞의|위의|기존)\s*(의\s*)?(모든\s*)?(지시|지침|명령|프롬프트)\S*\s*(을|를)?\s*(모두\s*)?(무시|잊)",
+    r"(이전|앞의|위의|기존|앞서)\s*(의\s*)?(모든\s*)?(받은\s*)?(지시|지침|명령|프롬프트)\S*\s*(을|를|은|는)?\s*(모두\s*)?(무시|잊|따르지\s*말)",
+    r"(지시|지침|명령)\S{0,3}\s*(따르지\s*말|무시하고)",
     r"시스템\s*프롬프트",
     r"(너는|당신은)\s*이제(부터)?",
-    r"(AI|에이아이|챗봇|어시스턴트|인공지능)\s*(에게|는|은)?\s*.{0,20}(반드시|무조건)\s*.{0,30}(답|말|추천|출력)",
+    rf"{_AI_WORD}\s*(에게|는|은|이|가)?\s*.{{0,20}}(반드시|무조건|꼭)\s*.{{0,30}}(답|말|추천|소개|출력)",
+    rf"{_AI_WORD}\S{{0,2}}\s*(이\s*)?(글|페이지|문서|후기)\S{{0,2}}\s*(읽|요약|참고)",
+    rf"(읽|요약|참고)\S{{0,3}}\s*{_AI_WORD}\S{{0,2}}\s*.{{0,30}}(추천|소개|답|말|출력)",
 ]
 _INSTRUCTION_REGEX = re.compile("|".join(f"(?:{p})" for p in INSTRUCTION_PATTERNS), re.IGNORECASE)
+_ZERO_WIDTH = re.compile(r"[​-‏⁠﻿­]")
+
+
+def normalize_for_check(text: str) -> str:
+    """지시문 검사 전 정규화: 전각 문자 → 반각(NFKC), 폭 0 공백·소프트 하이픈 제거, 공백 정리(우회 표기 대비)."""
+    return " ".join(_ZERO_WIDTH.sub("", unicodedata.normalize("NFKC", text or "")).split())
 
 
 @dataclass
@@ -68,9 +84,15 @@ class JudgeOutcome:
 
 
 def find_instruction_pattern(text: str) -> str:
-    """본문에서 AI를 향한 지시 문구를 찾아 처음 걸린 부분을 돌려준다. 없으면 빈 문자열."""
-    found = _INSTRUCTION_REGEX.search(text or "")
+    """글(정규화 후)에서 AI를 향한 지시 문구를 찾아 처음 걸린 부분을 돌려준다. 없으면 빈 문자열."""
+    found = _INSTRUCTION_REGEX.search(normalize_for_check(text))
     return found.group(0)[:80] if found else ""
+
+
+def safe_title(title: str) -> str:
+    """시스템 프롬프트(URL 처리 결과)에 넣을 페이지 제목: 줄바꿈·괄호·따옴표·태그 문자를 빼고 길이를 자른다(R3-1)."""
+    cleaned = re.sub(r"[\[\]<>{}\"'`]", "", " ".join((title or "").split()))
+    return cleaned[: config.SAFE_TITLE_MAX_CHARS]
 
 
 def decide(judgement: RelevanceJudgement, pattern_match: str) -> str:
@@ -96,8 +118,10 @@ def _is_throttled(error: Exception) -> bool:
 
 
 def ask_judge(title: str, text: str) -> RelevanceJudgement:
-    """판정 LLM에 제목과 본문 앞부분을 보내 구조화 판정을 받는다. 한도 초과면 대체 모델을 순서대로 시도한다."""
-    body = text[: config.RELEVANCE_INPUT_CHARS]
+    """판정 LLM에 제목과 본문 앞부분·끝부분을 보내 구조화 판정을 받는다. 한도 초과면 대체 모델을 순서대로 시도한다.
+    (R3-1: 끝에 숨긴 지시문도 보도록 끝 RELEVANCE_TAIL_CHARS자를 함께 보낸다. 중간은 정규식이 본문 전체를 본다)"""
+    head, tail = config.RELEVANCE_INPUT_CHARS, config.RELEVANCE_TAIL_CHARS
+    body = text if len(text) <= head + tail else f"{text[:head]}\n…(중략)…\n{text[-tail:]}"
     messages = [("system", JUDGE_SYSTEM_PROMPT), ("human", f"<page>\n제목: {title}\n\n{body}\n</page>")]
     last_error: Exception | None = None
     for spec in [config.RELEVANCE_MODEL, *config.RELEVANCE_FALLBACK_MODELS]:
@@ -116,7 +140,7 @@ def ask_judge(title: str, text: str) -> RelevanceJudgement:
 
 def judge_page(page: CollectResult, user_id: str = "") -> JudgeOutcome:
     """수집한 페이지가 저장할 만한 여행 자료인지 판정한다. 거절·판정 실패는 로그에만 남긴다. (사용자에게 알리지 않음)"""
-    pattern_match = find_instruction_pattern(page.text)
+    pattern_match = find_instruction_pattern(f"{page.title}\n{page.text}")  # 제목도 검사한다(R3-1)
     log_data = {"url": page.url, "user_id": user_id}
     try:
         judgement = ask_judge(page.title, page.text)
@@ -178,6 +202,8 @@ NEXT_ACTIONS = {
     "network": "주소를 확인하거나 잠시 후 다시 보내 주세요",
     "timeout": "주소를 확인하거나 잠시 후 다시 보내 주세요",
     "no_content": "본문 내용을 글로 붙여 주시면 참고할게요",
+    "blocked_address": "공개된 웹페이지 주소를 보내 주세요",
+    "too_large": "필요한 내용을 글로 붙여 주시면 참고할게요",
 }
 
 
@@ -258,7 +284,7 @@ def build_url_notes(outcomes: list[UrlOutcome], skipped: list[str]) -> str:
     lines = ["[이번 턴 URL 처리 결과]"]
     for o in outcomes:
         if o.status in ("saved", "updated", "unchanged"):
-            lines.append(f"- 저장된 자료: {o.title} ({o.url}) → search_travel_info로 이 자료를 찾아 답변 근거로 쓰고 '제목 + URL'로 인용한다.")
+            lines.append(f"- 저장된 자료: {safe_title(o.title)} ({o.url}) → search_travel_info로 이 자료를 찾아 답변 근거로 쓰고 '제목 + URL'로 인용한다.")
         else:
             lines.append(f"- 참고할 수 없는 URL: {o.url} → 이 링크 내용 없이 web_search·지식베이스로 질문에 답한다. "
                          f"일반 지식으로 답한 부분은 '{config.NO_SOURCE_LABEL}'로 표시한다.")
@@ -293,7 +319,6 @@ def strip_url_notice(text: str) -> str:
 SAVED_SOURCE_LABEL = "📌 내가 저장한 자료"
 _SAVED_SOURCE_MARK = re.compile(re.escape(SAVED_SOURCE_LABEL) + r"(?: \(\d{2}/\d{2} 저장\))? ?")
 _REFERENCE_TAG = re.compile(r"<reference ([^>]*)>")
-_TAG_ATTR = re.compile(r'(\w+)="([^"]*)"')
 
 
 def remove_program_marks(text: str) -> str:
@@ -369,21 +394,23 @@ def url_only_answer(outcomes: list[UrlOutcome]) -> str:
 # 사용자가 이전에 저장한 자료를 근거로 삼으라고 말하는 표현 (SERVICE 2.6, 파이썬 규칙)
 _SAVED_REFERENCE = re.compile(r"저장(한|된|했던|해\s*둔|해\s*놓은|해\s*뒀던)|모아\s*(둔|놓은)|"
                               r"(내가|아까|저번에|전에)\s*(보낸|준|넣은|올린)\s*(거|것|글|링크|자료)")
-SAVED_SOURCE_MARK = f'source="{SOURCE_SAVED}"'  # tools.wrap_reference가 사용자 저장 자료에 붙이는 출처 구분 속성
 
 
 SEARCH_TOOLS = ("search_travel_info", "web_search")
 
 
-def saved_references_this_turn(messages: list) -> dict[str, str]:
-    """이번 턴(마지막 사용자 메시지 이후) 도구 결과에서 사용자 저장 자료(source="saved")의 URL → 저장 시각을 모은다."""
-    last_human = max((i for i, m in enumerate(messages) if getattr(m, "type", "") == "human"), default=-1)
+def saved_references_this_turn(messages: list, whole_conversation: bool = False) -> dict[str, str]:
+    """이번 턴(마지막 사용자 메시지 이후) 도구 결과에서 사용자 저장 자료(source="saved")의 URL → 저장 시각을 모은다.
+    whole_conversation이면 대화 전체 도구 결과에서 모은다. 일정 수정 턴은 지난 일정표의 출처를 그대로 쓰므로
+    (R1) 그 출처가 이번 턴에 다시 검색되지 않아도 📌를 유지하기 위해서다."""
+    last_human = -1 if whole_conversation else max(
+        (i for i, m in enumerate(messages) if getattr(m, "type", "") == "human"), default=-1)
     saved = {}
     for m in messages[last_human + 1:]:
         if getattr(m, "type", "") != "tool":
             continue
         for attrs in _REFERENCE_TAG.findall(str(m.content)):
-            a = dict(_TAG_ATTR.findall(attrs))
+            a = reference_attrs(attrs)
             if a.get("source") == SOURCE_SAVED and a.get("url"):
                 saved.setdefault(a["url"], a.get("collected_at", ""))
     return saved
@@ -395,8 +422,10 @@ def mark_saved_sources(text: str, saved: dict[str, str]) -> str:
     for url, collected_at in saved.items():
         day = collected_at[5:10].replace("-", "/")  # '2026-11-05T…' → '11/05'
         label = f"{SAVED_SOURCE_LABEL} ({day} 저장) " if day else f"{SAVED_SOURCE_LABEL} "
-        # [제목](url) 전체, 또는 링크 문법 밖의 맨 URL. URL 뒤에 더 긴 경로가 이어지는 다른 URL은 건드리지 않는다.
-        pattern = re.compile(r"\[[^\]\n]*\]\(" + re.escape(url) + r"\)|(?<![(\w/])" + re.escape(url) + r"(?![\w/?#=&%.-]*[\w/])")
+        # [제목](url) 전체, 일정표 형식 '제목 (url)'의 괄호 부분, 또는 링크 문법 밖의 맨 URL.
+        # URL 뒤에 더 긴 경로가 이어지는 다른 URL은 건드리지 않는다. (일정표 형식은 R1에서 추가: 전엔 예산 줄에만 붙었다)
+        pattern = re.compile(r"\[[^\]\n]*\]\(" + re.escape(url) + r"\)|(?<![\]\w])\(" + re.escape(url) + r"\)"
+                             r"|(?<![(\w/])" + re.escape(url) + r"(?![\w/?#=&%.-]*[\w/])")
         text = pattern.sub(lambda m: label + m.group(0), text)
     return text
 
@@ -411,7 +440,10 @@ def saved_material_missing(messages: list) -> bool:
     if not _SAVED_REFERENCE.search(text):
         return False
     searches = [m for m in messages[last_human + 1:] if getattr(m, "type", "") == "tool" and getattr(m, "name", "") in SEARCH_TOOLS]
-    return bool(searches) and not any(SAVED_SOURCE_MARK in str(m.content) for m in searches)
+    # 실제 <reference> 태그의 source 속성으로 판정한다(본문에 'source="saved"' 글자를 넣어 속이지 못하게, R3-1)
+    has_saved = any(reference_attrs(attrs).get("source") == SOURCE_SAVED
+                    for m in searches for attrs in _REFERENCE_TAG.findall(str(m.content)))
+    return bool(searches) and not has_saved
 
 
 class UrlState(AgentState):
@@ -473,7 +505,8 @@ class UrlPreprocessMiddleware(AgentMiddleware):
         if cleaned != content:
             logger.info("답변 본문의 링크 안내 블록 제거", extra={"event": "url_notice_deduped", "data": {}})
         # 저장 자료 출처 표시: LLM이 직접 쓴 표시는 지우고, 프로그램 판정으로만 다시 붙인다.
-        saved = saved_references_this_turn(messages)
+        # 일정표 답변은 지난 일정표의 출처를 이어 쓸 수 있어 대화 전체의 검색 결과로 판정한다(R1).
+        saved = saved_references_this_turn(messages, whole_conversation=getattr(last, "name", "") == "render_itinerary")
         cleaned = mark_saved_sources(remove_program_marks(cleaned), saved)
         if cleaned == content and not notices:
             return None

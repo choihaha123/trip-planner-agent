@@ -1,6 +1,7 @@
 # tools.py - 도메인 도구 (docs/SPEC.md 1.2)
 # 여행 정보 검색(RAG 먼저)·웹 검색 등 에이전트가 호출하는 도구를 둔다.
 import hashlib
+import html
 import logging
 import math
 import re
@@ -33,10 +34,22 @@ def reference_id(url: str, i: int = 0) -> str:
 
 def wrap_reference(i: int, title: str, url: str, body: str, collected_at: str = "", source: str = "") -> str:
     """참고 자료 하나를 구분자 태그로 감싼다. 태그 안 본문은 데이터일 뿐이며, 인용에는 태그의 title·url을 쓴다. (SPEC 2.6, 2.8)
-    id는 URL로 만든 출처 ID(reference_id), source는 출처 구분(saved·kb·web)이다."""
-    attrs = (f'id="{reference_id(url, i)}" title="{title}" url="{url}"' + (f' source="{source}"' if source else "")
-             + (f' collected_at="{collected_at}"' if collected_at else ""))
-    return f"<reference {attrs}>\n{body}\n</reference>"
+    id는 URL로 만든 출처 ID(reference_id), source는 출처 구분(saved·kb·web)이다.
+    위조 방지(R3-1): 속성값은 HTML 이스케이프하고, 본문의 '<' '>'는 전각 '＜' '＞'로 바꿔 본문 안에 가짜
+    <reference> 태그(📌 저장 자료·출처 ID 위조)를 만들 수 없게 한다. 읽는 쪽은 reference_attrs로 속성을 푼다."""
+    attr = lambda value: html.escape(str(value or ""), quote=True)
+    attrs = (f'id="{reference_id(url, i)}" title="{attr(title)}" url="{attr(url)}"' + (f' source="{attr(source)}"' if source else "")
+             + (f' collected_at="{attr(collected_at)}"' if collected_at else ""))
+    safe_body = str(body or "").replace("<", "＜").replace(">", "＞")
+    return f"<reference {attrs}>\n{safe_body}\n</reference>"
+
+
+_REF_ATTR = re.compile(r'(\w+)="([^"]*)"')
+
+
+def reference_attrs(attrs: str) -> dict[str, str]:
+    """<reference …> 태그 속성 글을 {이름: 값}으로 푼다(wrap_reference의 HTML 이스케이프를 되돌린다)."""
+    return {k: html.unescape(v) for k, v in _REF_ATTR.findall(attrs)}
 
 
 def reference_source(doc) -> str:
@@ -85,10 +98,20 @@ def run_web_search(query: str) -> str | None:
         logger.warning("웹 검색 실패", extra={"event": "web_search_failed", "data": {
             "provider": config.WEB_SEARCH_PROVIDER, "query": query, "error": str(e)[-200:]}})
         return None
-    if not results:
+    # 웹 검색 결과도 저장 링크와 같은 지시문 검사를 거친다(R3-1: 전엔 검사 없이 모델에 들어갔다). 걸린 결과는 빼고 로그만 남긴다.
+    from src.middleware import find_instruction_pattern  # middleware가 tools를 import하므로 여기서 늦게 불러온다
+    safe = []
+    for r in results:
+        pattern = find_instruction_pattern(f"{r['title']}\n{r['content']}")
+        if pattern:
+            logger.warning("지시문 의심 웹 검색 결과 제외", extra={"event": "web_result_injection_suspected", "data": {
+                "url": r["url"], "pattern": pattern}})
+            continue
+        safe.append(r)
+    if not safe:
         return None
     return "\n\n".join(wrap_reference(i, r["title"], r["url"], r["content"], source=SOURCE_WEB)
-                       for i, r in enumerate(results, 1))
+                       for i, r in enumerate(safe, 1))
 
 
 # ---------- 여행 정보 검색 (SPEC 2.5): RAG 먼저 → LLM 관련성 판정 → 없으면 웹 검색 ----------
@@ -457,11 +480,20 @@ class BudgetItem(BaseModel):
     currency: str = Field(description="금액 통화 코드 (예: KRW, JPY)")
     unit: Literal["per_person", "per_person_per_day", "per_room_per_night", "group", "group_per_day"] = Field(
         description="per_person=1인 1회(항공 왕복), per_person_per_day=1인 1일(식비·현지 교통), "
-                    "per_room_per_night=객실 1박(숙박), group=일행 1회, group_per_day=일행 1일(렌터카)")
+                    "per_room_per_night=객실 1박(숙박), group=일행 1회, group_per_day=일행 1일(렌터카). "
+                    "숙박은 반드시 per_room_per_night로 1박 단가를 넣는다(박 수는 계산기가 곱함)")
     basis: Literal["user_input", "source", "llm_estimate"] = Field(
         description="금액 근거: user_input=사용자가 준 값, source=웹 검색 등 출처 있음, llm_estimate=출처를 못 찾은 추정치")
     source: str = Field(default="", description="basis가 source면 검색 결과 <reference>의 id (예: r3f9a1c). 제목·URL은 쓰지 않는다")
     day: int | None = Field(default=None, description="특정 일차에만 드는 비용이면 그 일차(1부터). 지정하면 그날 하루분으로 계산")
+
+
+_LODGING_NAME = re.compile(r"숙박|호텔|숙소|료칸|게스트\s*하우스|호스텔|에어비앤비")
+
+
+def is_lodging(item: BudgetItem) -> bool:
+    """숙박 비용 항목인지(분류가 lodging이거나, 분류를 안 정한 other인데 이름이 숙박류). '호텔 셔틀'처럼 교통으로 분류한 항목은 아니다."""
+    return item.category == "lodging" or (item.category == "other" and bool(_LODGING_NAME.search(item.name)))
 
 
 def room_count(people: int) -> int:
@@ -530,6 +562,10 @@ def compute_budget(items: list[BudgetItem], people: int, nights: int, budget: fl
             raise BudgetError(f"'{item.name}' 금액이 올바르지 않습니다. (0 ≤ 최소 ≤ 최대)")
         if item.day is not None and not 1 <= item.day <= days:
             raise BudgetError(f"'{item.name}'의 일차({item.day})가 여행 기간 1~{days}일차 밖입니다.")
+        # 숙박은 '객실 1박 단가 × 객실 수 × 박 수'로만 계산한다. 1박 값을 1회 비용으로 넣어 박 수만큼 빠지는 실수를 막는다(R1-4).
+        if nights > 0 and is_lodging(item) and item.unit != "per_room_per_night":
+            raise BudgetError(f"'{item.name}'은 숙박이므로 unit=per_room_per_night(객실 1박 단가)로 넣으세요. "
+                              f"객실 수·박 수({nights}박)는 계산기가 곱합니다. 총액만 알면 박 수로 나눈 1박 단가를 넣으세요.")
         cur = normalize_currency(item.currency)
         if cur != display and cur not in rates:
             try:
@@ -586,7 +622,8 @@ def render_budget(result: dict, for_user: bool = False) -> str:
     for_user=True면 사용자에게 바로 보여줄 글이라 LLM용 지시 문구를 넣지 않는다."""
     cur = result["currency"]
     lines = [f"[예산 계산 · 대략치] 인원 {result['people']}명, {result['nights']}박{result['days']}일, "
-             f"객실 {result['rooms']}개({config.PEOPLE_PER_ROOM}인 1실 기준)", "항목별:"]
+             f"객실 {result['rooms']}개" + (f"({config.PEOPLE_PER_ROOM}인 1실 기준)" if result["people"] > 1 else ""),
+             "항목별:"]
     for r in result["rows"]:
         it = r["item"]
         when = f", {it.day}일차" if it.day else ""
@@ -783,8 +820,19 @@ PREFERENCE_ASSUMPTIONS = {
     "pace": "여행 스타일은 적당한 속도(하루 3~4곳)로 가정",
     "interests": "관심사는 대표 관광·음식 위주로 가정",
 }
-ASKED_MARKER = "[물어본 항목:"  # 다음 호출에서 '이미 물어본 항목'을 찾기 위한 표시
-_ASKED_PATTERN = re.compile(r"\[물어본 항목: ([a-z_, ]*) \| 목적지: (.*)\]")
+ASKED_MARKER = "[물어본 항목:"  # 다음 호출에서 '이미 물어본 항목'과 '이미 받은 항목'을 찾기 위한 표시
+# 받은 항목은 2026-11-06 R5-1 추가(이전 대화의 표시에는 없을 수 있다)
+_ASKED_PATTERN = re.compile(r"\[물어본 항목: ([a-z_, ]*)(?: \| 받은 항목: ([a-z_, ]*))? \| 목적지: (.*)\]")
+KNOWN_BEFORE_TEXT = "앞서 말한 내용대로"  # 이전에 받은 항목을 모델이 이번 호출에서 빠뜨렸을 때의 확정 조건 문구
+
+
+def provided_trip_items(destination: str, nights: int | None, people: int | None, origin: str,
+                        budget: float | None, budget_basis: str, preferences: dict[str, str]) -> set[str]:
+    """이번 호출에서 값이 들어온 항목들."""
+    given = {"destination": destination.strip(), "nights": nights is not None, "people": people is not None,
+             "origin": origin.strip(), "budget": budget is not None, "budget_basis": budget_basis,
+             **{p: (preferences.get(p) or "").strip() for p in PREFERENCE_ITEMS}}
+    return {item for item, value in given.items() if value}
 
 
 def missing_trip_items(destination: str, nights: int | None, people: int | None, origin: str,
@@ -809,11 +857,12 @@ def missing_trip_items(destination: str, nights: int | None, people: int | None,
     return missing
 
 
-def asked_items_from_messages(messages, destination: str) -> tuple[set[str], str | None]:
-    """대화에서 가장 최근 check_trip_info 결과를 찾아 (지금까지 물어본 항목(누적), 답 대기 중인 이전 결과)를 돌려준다.
+def asked_items_from_messages(messages, destination: str) -> tuple[set[str], set[str], str | None]:
+    """대화에서 가장 최근 check_trip_info 결과를 찾아 (지금까지 물어본 항목, 지금까지 받은 항목, 답 대기 중인 이전 결과)를 돌려준다.
     - 그때의 목적지와 지금 목적지가 둘 다 있고 서로 다르면 새 여행으로 보고 빈 집합(처음부터 다시 확인).
     - 이전 결과가 [확인 필요]인데 그 뒤로 사용자 메시지가 없으면, 아직 묻지 않은 것이므로 그 결과를 함께 돌려준다."""
     user_replied = False
+    split = lambda text: {s.strip() for s in (text or "").split(",") if s.strip()}
     for message in reversed(messages or []):
         kind = getattr(message, "type", "")
         if kind == "human":
@@ -822,30 +871,37 @@ def asked_items_from_messages(messages, destination: str) -> tuple[set[str], str
             content = str(message.content)
             found = _ASKED_PATTERN.search(content)
             if not found:
-                return set(), None
-            previous, current = found.group(2).strip().lower(), destination.strip().lower()
+                return set(), set(), None
+            previous, current = found.group(3).strip().lower(), destination.strip().lower()
             if previous and current and previous != current:
-                return set(), None
+                return set(), set(), None
             if content.startswith("[확인 필요]") and not user_replied:
-                return set(), content  # 사용자 답 없이 다시 호출됨
-            return {s.strip() for s in found.group(1).split(",") if s.strip()}, None
-    return set(), None
+                return set(), set(), content  # 사용자 답 없이 다시 호출됨
+            return split(found.group(1)), split(found.group(2)), None
+    return set(), set(), None
 
 
 def evaluate_trip_info(destination: str, nights: int | None, people: int | None, origin: str,
                        budget: float | None, budget_basis: str, asked_before: set[str],
-                       preferences: dict[str, str] | None = None, delegate_preferences: bool = False) -> dict:
+                       preferences: dict[str, str] | None = None, delegate_preferences: bool = False,
+                       known_before: set[str] | None = None) -> dict:
     """빠진 항목을 판정한다. 처음 빠진 항목은 되묻고(ask), 이미 물어봤는데도 빠진 항목은 가정을 적용한다.
     취향 항목도 같은 규칙(처음 한 번 묻고, 답이 없으면 가정)이며, 사용자가 맡겼으면(delegate_preferences) 묻지 않고 가정한다.
-    결과: {"status": "ask"|"ready", "ask": [항목…], "assumed": {항목: 가정 문구}, "confirmed": {항목: 값 문구}}"""
+    known_before(이 대화에서 이미 받은 항목)는 이번 호출에서 빠져 있어도 묻지도 가정하지도 않고 '앞서 말한 내용대로'로 둔다
+    (R5-1: 첫 호출에 '많이 걷기 싫다'를 여행 스타일로 받았는데, 답을 받은 뒤 다시 부를 때 모델이 빠뜨리자 새로 묻던 문제).
+    결과: {"status": "ask"|"ready", "ask": [항목…], "assumed": {항목: 가정 문구}, "confirmed": {항목: 값 문구},
+           "asked": 물어본 항목(누적), "known": 받은 항목(누적)}"""
     if people is not None and people < 1:
         raise ValueError("인원은 1명 이상이어야 합니다.")
     if nights is not None and nights < 0:
         raise ValueError("박 수는 0 이상이어야 합니다.")
+    known_before = known_before or set()
     preferences = {p: (preferences or {}).get(p, "") or "" for p in PREFERENCE_ITEMS}
     if delegate_preferences:  # 취향을 맡긴 경우: 물어본 것과 같이 다룬다(가정으로 진행)
         asked_before = asked_before | set(PREFERENCE_ITEMS)
     missing = missing_trip_items(destination, nights, people, origin, budget, budget_basis, preferences)
+    carried = [m for m in missing if m in known_before]  # 전에 받은 값: 대화에 있으니 그대로 쓴다
+    missing = [m for m in missing if m not in known_before]
     to_ask = [m for m in missing if m not in asked_before]
 
     assumed = {}
@@ -882,10 +938,14 @@ def evaluate_trip_info(destination: str, nights: int | None, people: int | None,
     for item, value in preferences.items():
         if value.strip():
             confirmed[item] = f"{TRIP_ITEM_LABELS[item].split('(')[0]}: {value.strip()}"
-    # 이 대화에서 지금까지 물어본 항목(누적). 다음 호출에서 같은 항목을 다시 묻지 않는 기준이 된다.
+    for item in carried:
+        confirmed[item] = f"{TRIP_ITEM_LABELS[item].split('(')[0]}: {KNOWN_BEFORE_TEXT}"
+    # 이 대화에서 지금까지 물어본 항목·받은 항목(누적). 다음 호출에서 같은 항목을 다시 묻지 않는 기준이 된다.
+    provided = provided_trip_items(destination, nights, people, origin, budget, budget_basis, preferences)
     asked = [i for i in TRIP_ITEM_LABELS if i in asked_before or i in to_ask]
+    known = [i for i in TRIP_ITEM_LABELS if i in known_before or i in provided]
     return {"status": "ask" if to_ask else "ready", "ask": to_ask, "assumed": assumed, "confirmed": confirmed,
-            "asked": asked, "destination": destination.strip()}
+            "asked": asked, "known": known, "destination": destination.strip()}
 
 
 def render_trip_info(result: dict) -> str:
@@ -912,7 +972,8 @@ def render_trip_info(result: dict) -> str:
         lines.append("- 가정한 조건(render_itinerary의 assumptions에 넣어 맨 앞에 표시): " + ", ".join(required_assumed))
     if preference_assumed:
         lines.append("- 취향은 에이전트가 정함(assumptions에 넣지 않아도 됨): " + ", ".join(preference_assumed))
-    lines.append(f"{ASKED_MARKER} {', '.join(result['asked'])} | 목적지: {result['destination']}]")
+    lines.append(f"{ASKED_MARKER} {', '.join(result['asked'])} | 받은 항목: {', '.join(result.get('known', []))} "
+                 f"| 목적지: {result['destination']}]")
     return "\n".join(lines)
 
 
@@ -938,54 +999,77 @@ def check_trip_info(runtime: ToolRuntime[Any], destination: str = "", nights: in
         interests: 관심사 (사용자가 말했거나 장기 기억에 있을 때만, 예: 맛집, 사찰)
         delegate_preferences: 사용자가 취향·세부 계획은 알아서 하라고 했으면 true ('나머지는 알아서 해줘' 등)
     """
-    asked_before, awaiting = asked_items_from_messages(runtime.state.get("messages", []), destination)
+    asked_before, known_before, awaiting = asked_items_from_messages(runtime.state.get("messages", []), destination)
     if awaiting:  # 묻기 전에 다시 부른 경우: 가정으로 넘어가지 않고 같은 확인 요청을 돌려준다.
         return ("[확인 필요] 아직 사용자의 답을 받지 않았습니다. 이번 턴에는 다시 호출하지 말고, "
                 "앞서 안내한 항목을 사용자에게 물어보세요.\n" + awaiting.split("\n", 1)[1])
     try:
         result = evaluate_trip_info(destination, nights, people, origin, budget, budget_basis, asked_before,
                                     {"must_visit": must_visit, "pace": pace, "interests": interests},
-                                    delegate_preferences)
+                                    delegate_preferences, known_before)
     except ValueError as e:
         return f"정보 확인 실패: {e} 값을 고쳐 다시 호출하세요."
     return render_trip_info(result)
 
 
 # ---------- 출처 없는 가격 표시 (SERVICE 2.6): 지우지 않고 가격 옆에 '출처 없음, 사용자 확인 필요'를 붙인다 ----------
-_PRICE_NUM = r"\d[\d,]*(?:\.\d+)?(?:\s*(?:만|천))?"
+_PRICE_NUM = r"\d(?:[\d,]*\d)?(?:\.\d+)?(?:\s*(?:만|천))?"  # 끝의 쉼표('$5, 택시')는 금액에 넣지 않는다
 _PRICE_CUR = r"(?:원|엔|円|달러|유로|위안|바트|파운드|(?:KRW|JPY|USD|EUR|CNY|TWD|THB|VND|GBP|HKD|SGD)\b)"
-PRICE_PATTERN = re.compile(  # 예: 600엔, 1,200円, 3만원대, ¥600, $20, 820 JPY (이미 표시가 붙은 가격은 제외)
-    rf"(?:[¥￥₩$€£]\s*{_PRICE_NUM}|{_PRICE_NUM}\s*{_PRICE_CUR})(?:대|선)?(?!\s*\(출처 없음)")
+_PRICE_SYM = r"[¥￥₩$€£]"
+_RANGE_SEP = r"\s*[~～∼–-]\s*"
+PRICE_PATTERN = re.compile(  # 예: 600엔, 1,200円, 3만원대, ¥600, $20, 820 JPY, 1,000~2,000엔, ¥1,000~¥2,000 (이미 표시가 붙은 가격은 제외)
+    rf"(?:{_PRICE_SYM}\s*{_PRICE_NUM}(?:{_RANGE_SEP}{_PRICE_SYM}?\s*{_PRICE_NUM})?"
+    rf"|{_PRICE_NUM}(?:\s*{_PRICE_CUR})?{_RANGE_SEP}{_PRICE_NUM}\s*{_PRICE_CUR}"
+    rf"|{_PRICE_NUM}\s*{_PRICE_CUR})(?:대|선)?(?!\s*\(출처 없음)")
+
+# 통화 표기 → 통화 코드. 금액 대조는 통화가 같을 때만 한다(R1: '1,350엔'을 '1,350원'과 맞추지 않게).
+_CURRENCY_WORDS = {"원": "KRW", "₩": "KRW", "엔": "JPY", "円": "JPY", "¥": "JPY", "￥": "JPY", "달러": "USD", "$": "USD",
+                   "유로": "EUR", "€": "EUR", "위안": "CNY", "바트": "THB", "파운드": "GBP", "£": "GBP"}
+_CURRENCY_TOKEN = re.compile(r"KRW|JPY|USD|EUR|CNY|TWD|THB|VND|GBP|HKD|SGD|" + "|".join(map(re.escape, _CURRENCY_WORDS)))
+_AMOUNT = re.compile(r"(\d(?:[\d,]*\d)?(?:\.\d+)?)(?:\s*(만|천))?")
+
+PRICE_MATCH_TOLERANCE = 0.01  # 출처 글의 금액과 이 비율 이내로 같으면 같은 금액으로 본다 (반올림 표기 허용)
 
 
-PRICE_MATCH_TOLERANCE = 0.01  # 출처 글의 숫자와 이 비율 이내로 같으면 같은 금액으로 본다 (반올림 표기 허용)
-_NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
+def _price_amounts(expr: str) -> tuple[list[float], str]:
+    """가격 표현 하나를 (금액 목록, 통화 코드)로 바꾼다. 범위면 양 끝 값 둘이다.
+    예: '1,200円' → ([1200], JPY), '10만 엔' → ([100000], JPY), '3~5만원' → ([30000, 50000], KRW)."""
+    found = [(float(n.replace(",", "")), unit) for n, unit in _AMOUNT.findall(expr)]
+    last_unit = found[-1][1] if found else ""
+    values = []
+    for value, unit in found:
+        unit = unit or last_unit  # '3~5만원'처럼 앞쪽 단위가 생략된 범위
+        values.append(value * {"만": 10_000, "천": 1_000}.get(unit, 1))
+    token = _CURRENCY_TOKEN.search(expr)
+    currency = (_CURRENCY_WORDS.get(token.group(0), token.group(0))) if token else ""
+    return values, currency
 
 
-def _price_value(text: str) -> float | None:
-    """가격 표현의 금액을 숫자로 바꾼다. (예: '1,200円' → 1200, '10만 엔' → 100000, '8.46 KRW' → 8.46)"""
-    found = _NUMBER.search(text)
-    if not found:
-        return None
-    value = float(found.group(0).replace(",", ""))
-    rest = text[found.end():].lstrip()
-    if rest.startswith("만"):
-        value *= 10_000
-    elif rest.startswith("천"):
-        value *= 1_000
-    return value
+def _source_prices(text: str) -> list[tuple[float, str]]:
+    """글 속의 가격 표현(통화가 붙은 금액)만 (금액, 통화)로 모은다. 통화 없는 숫자(시간·거리·연도)는 대조하지 않는다."""
+    prices = []
+    for m in PRICE_PATTERN.finditer(text or ""):
+        values, currency = _price_amounts(m.group(0))
+        prices += [(v, currency) for v in values]
+    return prices
+
+
+def _all_found(values: list[float], currency: str, prices: list[tuple[float, str]]) -> bool:
+    """가격 표현의 금액이 모두 같은 통화의 출처 금액(오차 PRICE_MATCH_TOLERANCE 이내)에 있는지."""
+    return bool(values) and all(any(c == currency and abs(v - k) <= PRICE_MATCH_TOLERANCE * max(v, k) for k, c in prices)
+                                for v in values)
 
 
 def label_unsourced_prices(text: str, sourced_text: str = "") -> tuple[str, int]:
     """글 속 가격 표현마다 뒤에 '(출처 없음, 사용자 확인 필요)'를 붙인다. (바뀐 글, 붙인 개수)를 돌려준다.
-    sourced_text(이번 턴 도구 결과 등)에 같은 금액(오차 1% 이내)이 있는 가격은 출처가 있는 것으로 보고 건너뛴다."""
-    known = [float(n.replace(",", "")) for n in _NUMBER.findall(sourced_text or "")]
+    sourced_text(이번 턴 도구 결과 등)에 같은 통화·같은 금액(오차 1% 이내)이 있는 가격은 출처가 있는 것으로 보고 건너뛴다."""
+    known = _source_prices(sourced_text)
     count = 0
 
     def repl(m: re.Match) -> str:
         nonlocal count
-        value = _price_value(m.group(0))
-        if value and any(abs(value - k) <= PRICE_MATCH_TOLERANCE * max(value, k) for k in known):
+        values, currency = _price_amounts(m.group(0))
+        if _all_found(values, currency, known):
             return m.group(0)
         count += 1
         return f"{m.group(0)} ({config.NO_SOURCE_LABEL})"
@@ -996,31 +1080,30 @@ def label_unsourced_prices(text: str, sourced_text: str = "") -> tuple[str, int]
 _REFERENCE_BLOCK = re.compile(r'<reference [^>]*?title="([^"]*)" url="([^"]*)"[^>]*>(.*?)</reference>', re.DOTALL)
 
 
-def _has_amount(value: float, text: str) -> bool:
-    """text 안에 value와 같은 금액(오차 PRICE_MATCH_TOLERANCE 이내)의 숫자가 있는지."""
-    return any(abs(value - float(n.replace(",", ""))) <= PRICE_MATCH_TOLERANCE * max(value, float(n.replace(",", "")))
-               for n in _NUMBER.findall(text))
-
-
 def annotate_answer_prices(text: str, tool_text: str) -> tuple[str, int, int]:
-    """출처 URL이 없는 일반 답변의 가격마다 근거를 붙인다. (바뀐 글, 출처를 붙인 수, '출처 없음'을 붙인 수)
-    - 이번 턴 검색 결과(<reference>)에 같은 금액이 있으면 그 결과의 '(출처: 제목 URL)'을 붙인다.
-    - 환율·예산 등 다른 도구 결과에 같은 금액이 있으면 도구 출처가 이미 있으므로 그대로 둔다.
-    - 어디에도 없으면 '(출처 없음, 사용자 확인 필요)'를 붙인다. (SERVICE 2.6)"""
-    references = _REFERENCE_BLOCK.findall(tool_text or "")
-    other_text = _REFERENCE_BLOCK.sub("", tool_text or "")
+    """일반 답변의 가격마다 근거를 확인해 붙인다. (바뀐 글, 출처를 붙인 수, '출처 없음'을 붙인 수)
+    대조는 통화가 붙은 금액끼리, 같은 통화일 때만 하고, 범위는 양 끝 값이 모두 있어야 한다. (SERVICE 2.6)
+    - 이번 턴 검색 결과(<reference>) 하나에 같은 금액이 있으면: 답변이 이미 그 URL을 인용했으면 그대로, 아니면 '(출처: 제목 URL)'.
+    - 여러 검색 결과에 나눠 있거나 환율·예산 등 다른 도구 결과에 있으면 근거가 있으므로 그대로 둔다.
+    - 어디에도 없으면 '(출처 없음, 사용자 확인 필요)'. 답변에 다른 URL이 있어도 가격마다 따로 판정한다(R1: 전에는 URL이
+      하나라도 있으면 검사를 건너뛰어, 다른 사실을 인용한 답변 속 지어낸 가격이 표시 없이 나갔다)."""
+    references = [(html.unescape(title), html.unescape(url), _source_prices(body))
+                  for title, url, body in _REFERENCE_BLOCK.findall(tool_text or "")]
+    all_prices = _source_prices(_REFERENCE_BLOCK.sub("", tool_text or "")) + [p for *_, ps in references for p in ps]
     cited = labeled = 0
 
     def repl(m: re.Match) -> str:
         nonlocal cited, labeled
-        value = _price_value(m.group(0))
-        if not value:
+        values, currency = _price_amounts(m.group(0))
+        if not values:
             return m.group(0)
-        for title, url, body in references:
-            if _has_amount(value, body):
+        for title, url, prices in references:
+            if _all_found(values, currency, prices):
+                if url in text:  # 답변이 이미 이 출처를 인용했다
+                    return m.group(0)
                 cited += 1
                 return f"{m.group(0)} (출처: {title} {url})"
-        if _has_amount(value, other_text):
+        if _all_found(values, currency, all_prices):
             return m.group(0)
         labeled += 1
         return f"{m.group(0)} ({config.NO_SOURCE_LABEL})"
@@ -1037,7 +1120,6 @@ class SourceRef(BaseModel):
 
 SOURCE_ID_HELP = "검색 결과 <reference>의 id (예: r3f9a1c). 제목·URL은 쓰지 않는다. 없으면 비움"
 _REFERENCE_TAG = re.compile(r"<reference ([^>]*)>")
-_TAG_ATTR = re.compile(r'(\w+)="([^"]*)"')
 
 
 def reference_index(messages: list) -> dict[str, SourceRef]:
@@ -1048,24 +1130,25 @@ def reference_index(messages: list) -> dict[str, SourceRef]:
         if getattr(m, "type", "") != "tool":
             continue
         for attrs in _REFERENCE_TAG.findall(str(m.content)):
-            a = dict(_TAG_ATTR.findall(attrs))
+            a = reference_attrs(attrs)
             if a.get("id") and a.get("url"):
                 index.setdefault(a["id"], SourceRef(title=a.get("title", ""), url=a["url"]))
     return index
 
 
 def resolve_source(value: str | None, index: dict[str, SourceRef]) -> SourceRef | None:
-    """출처 ID를 제목·URL로 바꾼다. 모델이 예전처럼 URL을 직접 쓴 경우도 받는다. 풀 수 없으면 None(출처 없음으로 처리)."""
+    """출처 ID를 제목·URL로 바꾼다. 모델이 URL을 직접 쓴 경우는 그 URL이 대화의 검색 결과(index)에 있을 때만 받는다.
+    풀 수 없으면 None(출처 없음으로 처리). 검색된 적 없는 URL을 출처로 찍지 않기 위해서다(R1, SERVICE 2.6)."""
     value = (value or "").strip()
     if not value:
         return None
     if value in index:
         return index[value]
     url = re.search(r"https?://\S+?(?=[)\s]|$)", value)
-    if url:
-        found = next((s for s in index.values() if s.url == url.group(0)), None)
-        return found or SourceRef(title=value.replace(url.group(0), "").strip(" ()") or url.group(0), url=url.group(0))
-    logger.info("알 수 없는 출처 ID", extra={"event": "unknown_source_id", "data": {"value": value[:40]}})
+    found = next((s for s in index.values() if s.url == url.group(0)), None) if url else None
+    if found:
+        return found
+    logger.info("알 수 없는 출처(검색 결과에 없음)", extra={"event": "unknown_source_id", "data": {"value": value[:80]}})
     return None
 
 
@@ -1094,11 +1177,13 @@ class Admission(BaseModel):
 class ScheduleItem(BaseModel):
     """일정 한 칸 (시간대·장소·이동)."""
     time: str = Field(description="시간 또는 시간대 (예: 09:00, 오전, 저녁)")
-    place: str = Field(description="장소 (예: 오사카성)")
+    place: str = Field(description="장소 이름 하나 (예: 오사카성, 이치란 라멘 신주쿠점, 간사이 국제공항). 식사는 검색 결과의 가게 이름을 쓰고 "
+                                   "'저녁 식사'·'시부야 맛집'처럼 막연하게 쓰지 않는다('식사'는 activity에). 공항·가게를 'A 또는 B'로 남기지 않고 하나로 정한다")
     activity: str = Field(default="", description="할 일 한 줄 (입장료는 여기 말고 admission에 넣는다)")
     transport: str = Field(default="", description="이 장소로 가는 이동수단 (예: 난카이 전철)")
     travel_time: str = Field(default="", description="이동 소요시간 (예: 약 45분)")
-    source: str = Field(default="", description=f"이 일정의 근거 출처: {SOURCE_ID_HELP}")
+    source: str = Field(default="", description=f"이 일정의 근거 출처: {SOURCE_ID_HELP}. 그 장소를 실제로 다루는 결과만 쓰고, "
+                                                f"같은 출처를 {config.ITINERARY_MAX_ITEMS_PER_SOURCE}곳 넘게 반복하지 않는다(맞는 결과가 없으면 비움)")
     admission: Admission | None = Field(default=None, description="입장료 (출처가 확인된 경우만)")
 
 
@@ -1106,6 +1191,46 @@ class DayPlan(BaseModel):
     """하루 일정."""
     day: int = Field(description="일차 (1부터)")
     items: list[ScheduleItem] = Field(description="시간 순서대로의 일정")
+
+
+# ---------- 일정표 구체성 검사 (R5-3): 막연한 식사 장소·정하지 않은 공항/가게·같은 출처 반복을 돌려보낸다 ----------
+QUALITY_MARKER = "일정표 구체성 검사:"  # 돌려보낸 결과의 첫머리 (턴당 재시도 횟수를 셀 때 쓴다)
+_GENERIC_FOOD = re.compile(r"맛집|식사|음식점|식당|레스토랑|먹거리|먹자\s*골목")
+_FOOD_HINT = re.compile(r"맛집|식사|음식|식당|레스토랑|스시|초밥|라멘|라면|우동|소바|카페|이자카야|야키토리|돈카츠|규카츠|텐동|오코노미야키|타코야키")
+_UNDECIDED = re.compile(r"/|또는|혹은|\bor\b")
+
+
+def validate_itinerary_quality(days: list[DayPlan]) -> list[str]:
+    """일정 항목이 그대로 쓸 수 있을 만큼 구체적인지 파이썬 규칙으로 검사하고 문제 목록을 돌려준다(없으면 빈 목록).
+    - 식사 장소에 가게 이름이 없음('시부야 맛집', '저녁 식사')
+    - 공항·식사 장소를 'A/B', 'A 또는 B'로 정하지 않음 (예약 전 숙소 지역 등은 검사하지 않는다)
+    - 출처 하나를 ITINERARY_MAX_ITEMS_PER_SOURCE곳 넘게 반복"""
+    problems = []
+    per_source: dict[str, list[str]] = {}
+    for d in days:
+        for it in d.items:
+            where = f"{d.day}일차 {it.time} '{it.place}'"
+            food = _FOOD_HINT.search(f"{it.place} {it.activity}")
+            if _GENERIC_FOOD.search(it.place):
+                problems.append(f"{where}: 가게 이름이 없습니다. 검색 결과의 실제 가게 이름을 place에 넣으세요('식사'는 activity에).")
+            elif _UNDECIDED.search(it.place) and ("공항" in it.place or food):
+                problems.append(f"{where}: 하나로 정하세요(후보를 '/'·'또는'으로 남기지 않음).")
+            if it.source:
+                per_source.setdefault(it.source, []).append(it.place)
+    for source, places in per_source.items():
+        if len(places) > config.ITINERARY_MAX_ITEMS_PER_SOURCE:
+            problems.append(f"출처 {source}를 {len(places)}곳({', '.join(places[:5])}…)에 붙였습니다. "
+                            f"각 장소를 실제로 다루는 검색 결과로 바꾸거나 출처를 비우세요(한 출처는 "
+                            f"{config.ITINERARY_MAX_ITEMS_PER_SOURCE}곳까지).")
+    return problems
+
+
+def quality_retries_used(messages: list) -> int:
+    """이번 턴에 구체성 검사로 돌려보낸 횟수."""
+    last_human = max((i for i, m in enumerate(messages or []) if getattr(m, "type", "") == "human"), default=-1)
+    return sum(1 for m in (messages or [])[last_human + 1:]
+               if getattr(m, "type", "") == "tool" and getattr(m, "name", "") == "render_itinerary"
+               and QUALITY_MARKER in str(m.content))
 
 
 def build_itinerary_text(title: str, destination: str, nights: int, people: int, origin: str, days: list[DayPlan],
@@ -1199,6 +1324,92 @@ def build_itinerary_text(title: str, destination: str, nights: int, people: int,
     return "\n".join(lines)
 
 
+_COST_WORDS = re.compile(r"입장료|입장권|관람료|이용료|티켓|요금|전망대|\s|[()·,/]")
+
+
+def _place_key(text: str) -> str:
+    """장소·비용 이름 비교용 키: 비용을 뜻하는 말·공백·괄호를 뺀다. 예: '금각사 입장료' → '금각사'."""
+    return _COST_WORDS.sub("", text or "").lower()
+
+
+def align_budget_days(items: list[BudgetItem] | None, days: list[DayPlan]) -> list[BudgetItem] | None:
+    """입장료·일차 지정 비용의 일차를 일정표에서 그 장소가 나오는 일차로 맞춘다(R1-4: 금각사는 2일차인데 예산은 1일차였다).
+    이름이 정확히 한 일차의 장소와만 맞을 때만 바꾸고, 여러 일차에 나오거나 맞는 장소가 없으면 그대로 둔다."""
+    if not items:
+        return items
+    places = [(d.day, _place_key(it.place)) for d in days for it in d.items]
+    aligned = []
+    for item in items:
+        key = _place_key(item.name)
+        if (item.category == "admission" or item.day is not None) and len(key) >= 2:
+            found = {day for day, place in places if len(place) >= 2 and (key in place or place in key)}
+            if len(found) == 1 and item.day != (day := found.pop()):
+                logger.info("비용 일차를 일정표에 맞춤", extra={"event": "budget_day_aligned", "data": {
+                    "item": item.name, "from": item.day, "to": day}})
+                item = item.model_copy(update={"day": day})
+        aligned.append(item)
+    return aligned
+
+
+# ---------- 일정 수정 시 '바뀐 점' (R5-4): 직전 일정표(아티팩트)와 새 일정을 파이썬이 비교한다 ----------
+CHANGES_HEADER = "## 바뀐 점"
+
+
+def previous_itinerary(messages: list) -> dict | None:
+    """이번 턴 이전 대화에서 가장 최근에 성공한 일정표의 구조화 데이터(render_itinerary 아티팩트). 없으면 None."""
+    last_human = max((i for i, m in enumerate(messages or []) if getattr(m, "type", "") == "human"), default=0)
+    for m in reversed((messages or [])[:last_human]):
+        if (getattr(m, "type", "") == "tool" and getattr(m, "name", "") == "render_itinerary"
+                and getattr(m, "status", "success") != "error" and isinstance(getattr(m, "artifact", None), dict)):
+            return m.artifact
+    return None
+
+
+def same_destination(before: str, after: str) -> bool:
+    """두 목적지가 같은 여행인지. 공백·괄호·쉼표를 빼고 한쪽이 다른 쪽을 포함하면 같다고 본다('도쿄'·'일본 도쿄'·'도쿄 (Tokyo)')."""
+    norm = lambda s: re.sub(r"[\s()（）,·/]", "", s or "").lower()
+    a, b = norm(before), norm(after)
+    return bool(a and b) and (a in b or b in a)
+
+
+def itinerary_changes(old: dict, days: list[DayPlan]) -> list[dict]:
+    """직전 일정과 새 일정의 장소를 일차별로 비교한다. 같은 시간대에서 장소가 바뀌면 changed(before→after),
+    새로 생기면 added, 없어지면 removed. 결과 항목: {day, time, kind, before, after}. 장소는 공백·비용 말을 빼고 비교한다."""
+    old_days = {d["day"]: d.get("items", []) for d in old.get("days", [])}
+    changes = []
+    for day in sorted(set(old_days) | {d.day for d in days}):
+        new_items = next((d.items for d in days if d.day == day), [])
+        old_items = old_days.get(day, [])
+        new_keys = [_place_key(it.place) for it in new_items]
+        old_keys = [_place_key(it.get("place", "")) for it in old_items]
+        removed = [it for it, key in zip(old_items, old_keys) if key not in new_keys]
+        for it, key in zip(new_items, new_keys):
+            if key in old_keys:
+                continue
+            same_slot = next((r for r in removed if r.get("time") == it.time), None)
+            if same_slot is not None:
+                removed.remove(same_slot)
+                changes.append({"day": day, "time": it.time, "kind": "changed", "before": same_slot.get("place", ""),
+                                "after": it.place})
+            else:
+                changes.append({"day": day, "time": it.time, "kind": "added", "before": "", "after": it.place})
+        changes += [{"day": day, "time": r.get("time", ""), "kind": "removed", "before": r.get("place", ""), "after": ""}
+                    for r in removed]
+    return changes
+
+
+def render_changes(changes: list[dict], old_budget: dict | None, new_budget: dict | None) -> str:
+    """'바뀐 점' 요약 글. 일정 변경이 없으면 그렇다고 적고, 예산 총액이 바뀌었으면 함께 적는다."""
+    labels = {"changed": lambda c: f"{c['before']} → {c['after']}", "added": lambda c: f"추가 — {c['after']}",
+              "removed": lambda c: f"빠짐 — {c['before']}"}
+    lines = [f"- {c['day']}일차 {c['time']}: {labels[c['kind']](c)}" for c in changes] or ["- 일정 항목은 그대로입니다."]
+    if old_budget and new_budget and old_budget.get("currency") == new_budget.get("currency") \
+            and list(old_budget["group_total"]) != list(new_budget["group_total"]):
+        cur = new_budget["currency"]
+        lines.append(f"- 예산 총액: {format_range(*old_budget['group_total'], cur)} → {format_range(*new_budget['group_total'], cur)}")
+    return CHANGES_HEADER + "\n" + "\n".join(lines)
+
+
 @tool(response_format="content_and_artifact")
 def render_itinerary(title: str, destination: str, nights: int, people: int, origin: str, days: list[DayPlan],
                      runtime: ToolRuntime[Any], start_date: str = "", assumptions: list[str] | None = None,
@@ -1228,8 +1439,17 @@ def render_itinerary(title: str, destination: str, nights: int, people: int, ori
         adjustments: 예산 초과일 때의 조정안 (숙박 등급·일정 조정 등). 초과인데 비어 있으면 오류로 돌아온다
     """
     # 출처는 ID로만 받고 파이썬이 대화 기록의 검색 결과에서 제목·URL을 채운다(출력 토큰 감소, URL 베껴 쓰기 오류 방지)
-    source_index = reference_index(runtime.state.get("messages", []))
-    budget_items = resolve_budget_sources(budget_items, source_index)
+    messages = runtime.state.get("messages", [])
+    # 구체성 검사(R5-3): 턴당 ITINERARY_QUALITY_RETRIES번까지만 돌려보낸다(검색 상한 뒤 같은 거절이 반복되지 않게)
+    if quality_retries_used(messages) < config.ITINERARY_QUALITY_RETRIES:
+        problems = validate_itinerary_quality(days)
+        if problems:
+            logger.info("일정표 구체성 검사로 돌려보냄", extra={"event": "itinerary_quality_rejected",
+                                                         "data": {"problems": len(problems)}})
+            raise ToolException(f"{QUALITY_MARKER} 아래를 모두 고쳐서 render_itinerary를 다시 호출하세요. "
+                                "이미 받은 검색 결과에서 고르고, 맞는 결과가 없으면 출처를 비우세요.\n- " + "\n- ".join(problems))
+    source_index = reference_index(messages)
+    budget_items = align_budget_days(resolve_budget_sources(budget_items, source_index), days)
     try:
         budget_result = (compute_budget(budget_items, people, nights, budget, budget_basis, display_currency)
                          if budget_items else None)
@@ -1249,9 +1469,104 @@ def render_itinerary(title: str, destination: str, nights: int, people: int, ori
             "per_person": budget_result["per_person"], "daily": budget_result["daily"],
             "whole_trip": budget_result["whole_trip"], "judgement": budget_result["judgement"],
             "items": [r["item"].model_dump() for r in budget_result["rows"]],
+            # 화면 카드용 항목별 합계(R5-5): 이름·단위·일차·합계·근거(출처는 제목 URL로 풀린 글)
+            "rows": [{"name": r["item"].name, "unit": UNIT_LABELS[r["item"].unit], "day": r["item"].day,
+                      "total": r["total"], "basis": BASIS_LABELS[r["item"].basis],
+                      "source": r["item"].source if r["item"].basis == "source" else ""} for r in budget_result["rows"]],
         },
+        "changes": None,  # 직전 일정표를 고친 경우의 바뀐 항목 (화면이 카드에서 강조한다)
     }
+    # 같은 목적지의 직전 일정표가 있으면 '바뀐 점'을 맨 위에 붙인다(R5-4: 수정 답변은 바뀐 점 요약 + 전체 일정표)
+    old = previous_itinerary(messages)
+    if old and same_destination(old.get("destination") or "", destination):
+        artifact["changes"] = itinerary_changes(old, days)
+        text = render_changes(artifact["changes"], old.get("budget"), artifact["budget"]) + "\n\n" + text
+        logger.info("일정 수정 바뀐 점 표시", extra={"event": "itinerary_changes", "data": {"count": len(artifact["changes"])}})
+    elif old:
+        logger.info("목적지가 달라 바뀐 점 생략", extra={"event": "itinerary_changes_skipped", "data": {
+            "before": old.get("destination"), "after": destination}})
     return text, artifact
 
 
 render_itinerary.handle_tool_error = True  # 검증 실패(ToolException)는 LLM에 돌려 고치게 한다.
+
+
+# ---------- 웹 일정표 카드용 데이터 (R5-5): 표시 판정·금액 서식은 파이썬이 하고 화면은 그리기만 한다 ----------
+def _row_source(text: str, saved: dict[str, str]) -> dict | None:
+    """예산 항목의 '제목 URL' 출처 글을 {title, url, saved}로 나눈다(카드에서 링크로 보여 준다). URL이 없으면 None."""
+    found = re.search(r"https?://\S+$", (text or "").strip())
+    if not found:
+        return None
+    day = saved.get(found.group(0), "")
+    return {"title": text.strip()[: found.start()].strip() or found.group(0), "url": found.group(0),
+            "saved": day[5:10].replace("-", "/") if day else None}
+
+
+def itinerary_view(artifact: dict, saved: dict[str, str] | None = None) -> dict | None:
+    """render_itinerary 아티팩트를 화면 카드용 데이터로 바꾼다. 줄글 일정표와 같은 규칙을 쓴다:
+    출처 ID → 제목·URL(못 풀면 없음), 저장 자료면 저장일(📌), 입장료는 '무료'/금액 + 출처가 없으면 unsourced,
+    자유 텍스트(활동·참고·조정안)의 가격엔 '출처 없음' 표시, 바뀐 항목(changes)은 changed/added 표시.
+    saved: 저장 자료 URL → 저장 시각(middleware.saved_references_this_turn). 일정표가 아니면 None."""
+    if not isinstance(artifact, dict) or not artifact.get("days"):
+        return None
+    saved = saved or {}
+    sources = artifact.get("sources") or {}
+    used: dict[str, dict] = {}
+
+    def source(source_id: str | None) -> dict | None:
+        """출처 ID를 {title, url, saved(MM/DD 또는 None)}로 푼다. 출처 목록에도 모은다."""
+        ref = resolve_source(source_id, {k: SourceRef(**v) for k, v in sources.items()})
+        if not ref or not ref.url:
+            return None
+        day = saved.get(ref.url, "")
+        view = {"title": ref.title or ref.url, "url": ref.url, "saved": day[5:10].replace("-", "/") if day else None}
+        used.setdefault(ref.url, view)
+        return view
+
+    label = lambda text: label_unsourced_prices(text or "")[0]
+    changed = {(c["day"], _place_key(c["after"])): c["kind"] for c in artifact.get("changes") or [] if c.get("after")}
+    budget = artifact.get("budget")
+    daily = (budget or {}).get("daily") or {}
+    cur = (budget or {}).get("currency", "")
+    start = None
+    try:
+        start = date.fromisoformat(artifact.get("start_date") or "")
+    except ValueError:
+        pass
+    days = []
+    for d in sorted(artifact["days"], key=lambda x: x["day"]):
+        items = []
+        for it in d.get("items", []):
+            fee = None
+            if it.get("admission"):
+                a = it["admission"]
+                fee_source = source(a.get("source"))
+                fee = {"text": "무료" if a["max_amount"] == 0 else
+                       format_range(a["min_amount"], a["max_amount"], normalize_currency(a["currency"])),
+                       "source": fee_source, "unsourced": fee_source is None}
+            items.append({"time": it.get("time", ""), "place": label(it.get("place")), "activity": label(it.get("activity")),
+                          "move": " ".join(label(x) for x in (it.get("transport"), it.get("travel_time")) if x),
+                          "admission": fee, "source": source(it.get("source")),
+                          "change": changed.get((d["day"], _place_key(it.get("place", ""))))})
+        cost = daily.get(d["day"]) or daily.get(str(d["day"]))
+        days.append({"day": d["day"], "date": fmt_day(start + timedelta(days=d["day"] - 1)) if start else "",
+                     "items": items, "cost": format_range(*cost, cur) if budget and cost else ""})
+    budget_view = None
+    if budget:
+        judgement = budget.get("judgement")
+        budget_view = {
+            "total": format_range(*budget["group_total"], cur), "per_person": format_range(*budget["per_person"], cur),
+            "whole_trip": format_range(*budget["whole_trip"], cur) if budget.get("whole_trip") and budget["whole_trip"][1] else "",
+            "verdict": judgement["verdict"] if judgement else None,
+            "verdict_label": VERDICT_LABELS[judgement["verdict"]] if judgement else "",
+            "budget": format_money(judgement["budget"], cur) if judgement else "",
+            "rows": [{"name": r["name"], "unit": r["unit"], "day": r.get("day"), "total": format_range(*r["total"], cur),
+                      "basis": r["basis"], "source": _row_source(r.get("source", ""), saved)} for r in budget.get("rows", [])],
+        }
+    return {"title": artifact.get("title", ""), "destination": artifact.get("destination", ""),
+            "nights": artifact.get("nights"), "people": artifact.get("people"), "origin": artifact.get("origin", ""),
+            "start_date": fmt_day(start) if start else "", "assumptions": artifact.get("assumptions") or [],
+            "notes": [label(n) for n in artifact.get("notes") or []],
+            "adjustments": [label(a) for a in artifact.get("adjustments") or []],
+            "changes": artifact.get("changes") or [], "days": days, "budget": budget_view,
+            "sources": list(used.values())}

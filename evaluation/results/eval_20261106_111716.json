@@ -1,0 +1,72 @@
+{
+  "run_at": "2026-11-06T11:17:16",
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "pass_rate": 1.0,
+    "by_category": {
+      "edge": {
+        "total": 1,
+        "passed": 1
+      }
+    },
+    "guardrail_all_passed": null,
+    "partial": true,
+    "overall_pass": null,
+    "criteria": "통과율 80% 이상 + guardrail 전부 통과 (전체 실행일 때만 판정)"
+  },
+  "results": [
+    {
+      "id": "17",
+      "category": "edge",
+      "input": "2일차 오후 일정만 도톤보리 근처 맛집으로 바꿔줘.",
+      "answer": "## 바뀐 점\n- 2일차 14:00: 신사이바시 → 리쿠로 오지상 난바본점\n- 2일차 15:30: 추가 — 카페 안논 난바\n\n가정한 조건: 꼭 갈 곳은 오사카 대표 명소(오사카성, 도톤보리, 우메다 스카이빌딩)로 구성, 여행 스타일은 적당한 속도로 하루 3~4곳 방문, 관심사는 대표 관광지와 오사카 음식(타코야키, 오코노미야키) 위주\n\n# 오사카 2박3일 일정\n오사카 · 2박3일 (2026-11-13(금) ~ 2026-11-15(일)) · 1명 · 인천 출발\n\n## 1일차 2026-11-13(금)\n- 오후 인천국제공항 · 출발\n- 현지 오후 간사이 국제공항 · 도착\n- 15:00 난바 · 호텔 체크인 및 짐 정리\n  이동: 난카이 전철 약 40~50분\n  출처: 오사카 관광의 교통 수단 · 액세스 가이드 | 기차 · 지하철 · 버스를 타는 방법 (https://osaka-info.jp/ko/information/useful-access/)\n- 저녁 도톤보리 · 저녁 식사 및 거리 산책\n  이동: 도보 난바에서 도보 5~10분\n  출처: 오사카 도톤보리 맛집 리스트 12곳 - 오사카 추천 요리인 오코노미야끼, 타코야키, 라멘, 야끼니꾸 등 음식 리스트 정리 - LIVE JAPAN ( 일본여행·추천명소·지역정보 ) (https://livejapan.com/ko/in-kansai/in-pref-osaka/in-namba_dotonbori_shinsaibashi/article-a2000956)\n- 19:00 앗치치혼포 · 타코야키 맛보기\n  이동: 도보\n  출처: 오사카 도톤보리 맛집 추천 : 쿠루루타코야키 치보오코노미야키 : 네이버 블로그 (https://blog.naver.com/PostView.naver?blogId=djadbwls9533&logNo=221448693002&categoryNo=31&parentCategoryNo=0)\n  ▶ 1일차 비용(대략치): 76,284~127,140 KRW\n\n## 2일차 2026-11-14(토)\n- 09:00 오사카성 · 오사카성 공원 산책 및 천수각 관람\n  이동: Osaka Metro 타니마치선 난바에서 약 15분\n  입장료: 600 JPY\n  입장료 출처: 오사카성의 모든것! 입장료, 가는법, 뱃놀이 정보 총정리 - KKday Korea 공식 블로그 (https://www.kkday.com/ko/blog/33610/asia-japan-osaka-castle)\n  출처: 오사카성의 모든것! 입장료, 가는법, 뱃놀이 정보 총정리 - KKday Korea 공식 블로그 (https://www.kkday.com/ko/blog/33610/asia-japan-osaka-castle)\n- 12:00 도톤보리 · 점심 식사 (오코노미야키)\n  이동: Osaka Metro 약 20분\n  출처: 오사카 도톤보리 맛집 리스트 12곳 - 오사카 추천 요리인 오코노미야끼, 타코야키, 라멘, 야끼니꾸 등 음식 리스트 정리 - LIVE JAPAN ( 일본여행·추천명소·지역정보 ) (https://livejapan.com/ko/in-kansai/in-pref-osaka/in-namba_dotonbori_shinsaibashi/article-a2000956)\n- 14:00 리쿠로 오지상 난바본점 · 치즈케이크 디저트\n  이동: 도보 도톤보리에서 도보 5분\n  출처: 오사카 맛집 - 도톤보리/신사이바시/난바 디저트 현지인 맛집 추천 TOP 10 (https://flyingddo.tistory.com/entry/%EC%98%A4%EC%82%AC%EC%B9%B4-%EB%A7%9B%EC%A7%91-1)\n- 15:30 카페 안논 난바 · 수플레 팬케이크와 커피\n  이동: 도보 도보 5분\n  출처: 오사카 맛집 - 도톤보리/신사이바시/난바 디저트 현지인 맛집 추천 TOP 10 (https://flyingddo.tistory.com/entry/%EC%98%A4%EC%82%AC%EC%B9%B4-%EB%A7%9B%EC%A7%91-1)\n- 17:00 호젠지 요코초 · 전통 골목길 산책\n  이동: 도보 도보 5분\n  출처: 2025 일본 도톤보리 타코야끼, 철판구이 BEST 9 - KKday Korea 공식 블로그 (https://www.kkday.com/ko/blog/37446/asia-japan-osaka-dotombori-tako)\n- 저녁 도톤보리 · 저녁 식사 및 야경 감상\n  이동: 도보\n  ▶ 2일차 비용(대략치): 81,370~132,226 KRW\n\n## 3일차 2026-11-15(일)\n- 09:00 우메다 스카이빌딩 · 공중정원 전망대 관람\n  이동: Osaka Metro 미도스지선 난바에서 약 15분\n  입장료: 2,000 JPY\n  입장료 출처: 일본 오사카 여행 코스 우메다 스카이빌딩 공중정원 전망대 입장권 할인 예약 야경 관람 후기 : 네이버 블로그 (https://m.blog.naver.com/yomo__/224375321784?rvid=E7CD47707AB94666E3159FAE883E04BF5E59&targetKeyword=%EC%9A%B0%EB%A9%94%EB%8B%A4%EC%8A%A4%EC%B9%B4%EC%9D%B4%EB%B9%8C%EB%94%A9)\n  출처: 일본 오사카 여행 코스 우메다 스카이빌딩 공중정원 전망대 입장권 할인 예약 야경 관람 후기 : 네이버 블로그 (https://m.blog.naver.com/yomo__/224375321784?rvid=E7CD47707AB94666E3159FAE883E04BF5E59&targetKeyword=%EC%9A%B0%EB%A9%94%EB%8B%A4%EC%8A%A4%EC%B9%B4%EC%9D%B4%EB%B9%8C%EB%94%A9)\n- 11:30 우메다 · 점심 식사 및 마지막 쇼핑\n  이동: 도보\n- 오후 간사이 국제공항 · 공항 이동 및 출국\n  이동: 난카이 전철 난바에서 약 40~50분\n  출처: 오사카 관광의 교통 수단 · 액세스 가이드 | 기차 · 지하철 · 버스를 타는 방법 (https://osaka-info.jp/ko/information/useful-access/)\n- 저녁 인천국제공항 · 도착\n  ▶ 3일차 비용(대략치): 42,380~59,332 KRW\n\n## 참고\n- 11월 중순 오사카 날씨는 최고 16~20°C, 최저 9~10°C로 쌀쌀하니 가을 외투를 준비하세요. 귀국일(15일)에는 소나기 가능성 61%이니 우산을 챙기세요. (출처: Open-Meteo)\n- 엔조이 에코 카드는 Osaka Metro와 오사카 시티 버스 1일 무제한 이용권으로 평일 820엔 (출처 없음, 사용자 확인 필요), 주말 620엔 (출처 없음, 사용자 확인 필요)입니다.\n- 오사카 주유패스를 구매하면 우메다 스카이빌딩 전망대(오후 3시까지 무료)와 오사카성 천수각 무료 입장이 가능합니다.\n- 리쿠로 오지상 치즈케이크는 1,065엔 (출처 없음, 사용자 확인 필요), 카페 안논 난바 수플레 팬케이크는 1,450엔 (출처 없음, 사용자 확인 필요)부터입니다.\n\n## 예산 요약\n[예산 계산 · 대략치] 인원 1명, 2박3일, 객실 1개\n항목별:\n- 항공 왕복 [1인 1회] 200,000~250,000 KRW × 1 = 200,000~250,000 KRW (근거: 출처: 인천 오사카 항공권 왕복 싸게 예약한 후기 적정 비행기값은? : 네이버 블로그 https://m.blog.naver.com/hyj901009/223702306842)\n- 숙박 (비즈니스 호텔) [객실 1박] 50,856~84,760 KRW × 2 = 101,712~169,521 KRW (근거: LLM 추정치(출처 없음, 사용자 확인 필요))\n- 식비 [1인 1일] 25,428~42,380 KRW × 3 = 76,284~127,140 KRW (근거: LLM 추정치(출처 없음, 사용자 확인 필요))\n- 공항-시내 교통 (난카이 전철 왕복) [1인 1회] 15,257 KRW × 1 = 15,257 KRW (근거: 출처: 오사카 관광의 교통 수단 · 액세스 가이드 | 기차 · 지하철 · 버스를 타는 방법 https://osaka-info.jp/ko/information/useful-access/)\n- 시내 교통 (엔조이 에코 카드 2일) [1인 1회] 10,510~13,901 KRW × 1 = 10,510~13,901 KRW (근거: 출처: 오사카 관광을 저렴하게! 추천 주유 패스·1일 승차권 정리 | OSAKA-INFO https://osaka-info.jp/ko/information/ticket/travel-passes/)\n- 오사카성 천수각 입장료 [1인 1회, 2일차] 5,086 KRW × 1 = 5,086 KRW (근거: 출처: 오사카성의 모든것! 입장료, 가는법, 뱃놀이 정보 총정리 - KKday Korea 공식 블로그 https://www.kkday.com/ko/blog/33610/asia-japan-osaka-castle)\n- 우메다 스카이빌딩 전망대 입장료 [1인 1회, 3일차] 16,952 KRW × 1 = 16,952 KRW (근거: 출처: 일본 오사카 여행 코스 우메다 스카이빌딩 공중정원 전망대 입장권 할인 예약 야경 관람 후기 : 네이버 블로그 https://m.blog.naver.com/yomo__/224375321784?rvid=E7CD47707AB94666E3159FAE883E04BF5E59&targetKeyword=%EC%9A%B0%EB%A9%94%EB%8B%A4%EC%8A%A4%EC%B9%B4%EC%9D%B4%EB%B9%8C%EB%94%A9)\n일자별:\n- 1일차: 76,284~127,140 KRW\n- 2일차: 81,370~132,226 KRW\n- 3일차: 42,380~59,332 KRW\n- 여행 전체(항공 등 일자 무관): 225,767~279,158 KRW\n합계: 일행 총액 425,801~597,856 KRW / 1인당 425,801~597,856 KRW\n예산 판정(총액 예산 800,000 KRW, 최대값 기준): 예산 안 (최대값 기준 202,144 KRW 여유)\n적용 환율: 1 JPY = 8.47603 KRW (출처: Rates By Exchange Rate API (https://www.exchangerate-api.com))\n\n## 출처\n- 오사카 관광의 교통 수단 · 액세스 가이드 | 기차 · 지하철 · 버스를 타는 방법 (https://osaka-info.jp/ko/information/useful-access/)\n- 오사카 도톤보리 맛집 리스트 12곳 - 오사카 추천 요리인 오코노미야끼, 타코야키, 라멘, 야끼니꾸 등 음식 리스트 정리 - LIVE JAPAN ( 일본여행·추천명소·지역정보 ) (https://livejapan.com/ko/in-kansai/in-pref-osaka/in-namba_dotonbori_shinsaibashi/article-a2000956)\n- 오사카 도톤보리 맛집 추천 : 쿠루루타코야키 치보오코노미야키 : 네이버 블로그 (https://blog.naver.com/PostView.naver?blogId=djadbwls9533&logNo=221448693002&categoryNo=31&parentCategoryNo=0)\n- 오사카성의 모든것! 입장료, 가는법, 뱃놀이 정보 총정리 - KKday Korea 공식 블로그 (https://www.kkday.com/ko/blog/33610/asia-japan-osaka-castle)\n- 오사카 맛집 - 도톤보리/신사이바시/난바 디저트 현지인 맛집 추천 TOP 10 (https://flyingddo.tistory.com/entry/%EC%98%A4%EC%82%AC%EC%B9%B4-%EB%A7%9B%EC%A7%91-1)\n- 2025 일본 도톤보리 타코야끼, 철판구이 BEST 9 - KKday Korea 공식 블로그 (https://www.kkday.com/ko/blog/37446/asia-japan-osaka-dotombori-tako)\n- 일본 오사카 여행 코스 우메다 스카이빌딩 공중정원 전망대 입장권 할인 예약 야경 관람 후기 : 네이버 블로그 (https://m.blog.naver.com/yomo__/224375321784?rvid=E7CD47707AB94666E3159FAE883E04BF5E59&targetKeyword=%EC%9A%B0%EB%A9%94%EB%8B%A4%EC%8A%A4%EC%B9%B4%EC%9D%B4%EB%B9%8C%EB%94%A9)\n- 오사카 음식 결정판! 타코야키, 오코노미야키, 꼬치 커틀릿 등 필수 메뉴 소개 (https://osaka-info.jp/ko/gourmet/osaka_cuisine/)\n- 오사카에서 추천 오코노미야키/타코야키 | Tabelog (https://s.tabelog.com/kr/osaka/rstLst/RC0109)\n- 오사카 도톤보리 맛집 오코노미야끼 보테쥬 : 네이버 블로그 (https://m.blog.naver.com/wlsgml850/223657063408)\n- [오사카] 난바 도톤보리 90년된 카페에서 즐기는 디저트와 커피, 마루후쿠 커피 (https://gugujuoljuol.tistory.com/entry/%EC%98%A4%EC%82%AC%EC%B9%B4-%EB%82%9C%EB%B0%94-%EB%8F%84%ED%86%A4%EB%B3%B4%EB%A6%AC-90%EB%85%84%EB%90%9C-%EC%B9%B4%ED%8E%98%EC%97%90%EC%84%9C-%EC%A6%90%EA%B8%B0%EB%8A%94-%EB%94%94%EC%A0%80%ED%8A%B8%EC%99%80-%EC%BB%A4%ED%94%BC-%EB%A7%88%EB%A3%A8%ED%9B%84%EC%BF%A0-%EC%BB%A4%ED%94%BC)\n- 난바/니혼바시/도톤보리의 추천 카페/다방 (https://s.tabelog.com/kr/osaka/A2701/A270202/rstLst/cafe)",
+      "tools": [
+        "search_travel_info",
+        "search_travel_info",
+        "render_itinerary"
+      ],
+      "checks": [
+        {
+          "type": "tool",
+          "item": "render_itinerary",
+          "passed": true,
+          "reason": "호출된 도구: ['search_travel_info', 'search_travel_info', 'render_itinerary']"
+        },
+        {
+          "type": "trait",
+          "item": "## 바뀐 점",
+          "passed": true,
+          "reason": ""
+        },
+        {
+          "type": "trait",
+          "item": "1일차",
+          "passed": true,
+          "reason": ""
+        },
+        {
+          "type": "trait",
+          "item": "2일차",
+          "passed": true,
+          "reason": ""
+        },
+        {
+          "type": "trait",
+          "item": "3일차",
+          "passed": true,
+          "reason": ""
+        }
+      ],
+      "passed": true,
+      "error": "",
+      "prior": [
+        {
+          "input": "오사카 2박3일 일정 짜줘. 혼자, 인천 출발, 예산 80만원, 다음 주 금요일 출발. 나머지는 알아서 해줘.",
+          "answer": "가정한 조건: 꼭 갈 곳은 오사카 대표 명소(오사카성, 도톤보리, 우메다 스카이빌딩)로 구성, 여행 스타일은 적당한 속도로 하루 3~4곳 방문, 관심사는 대표 관광지와 오사카 음식(타코야키, 오코노미야키) 위주\n\n# 오사카 2박3일 일정\n오사카 · 2박3일 (2026-11-13(금) ~ 2026-11-15(일)) · 1명 · 인천 출발\n\n## 1일차 2026-11-13(금)\n- 오후 인천국제공항 · 출발\n- 현지 오후 간사이 국제공항 · 도착\n- 15:00 난바 · 호텔 체크인 및 짐 정리\n  이동: 난카이 전철 약 40~50분\n  출처: 오사카 관광의 교통 수단 · 액세스 가이드 | 기차 · 지하철 · 버스를 타는 방법 (https://osaka-info.jp/ko/information/useful-access/)\n- 저녁 도톤보리 · 저녁 식사 및 거리 산책\n  이동: 도보 난바에서 도보 5~10분\n  출처: 오사카 도톤보리 맛집 리스트 12곳 - 오사카 추천 요리인 오코노미야끼"
+        }
+      ],
+      "seconds": 154.4
+    }
+  ]
+}

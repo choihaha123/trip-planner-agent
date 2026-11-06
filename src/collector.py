@@ -1,16 +1,20 @@
 # collector.py - 웹페이지 수집·텍스트 추출 (docs/SPEC.md 2.1)
 # 페이지를 가져와 제목·본문 텍스트만 뽑고, 실패하면 이유를 분류한다. 관련도 판정·저장은 하지 않는다.
 # 수집기는 도메인별로 교체·추가할 수 있다(COLLECTORS). 1차는 일반 HTML 페이지만 지원한다.
+# 사용자가 준 주소로 서버가 요청을 보내므로, 내부망·로컬 주소는 리다이렉트 홉마다 막고(SSRF 방지) 전체 시간·크기를 직접 제한한다.
+import ipaddress
 import logging
 import re
+import socket
+import time
 from collections import defaultdict
 from dataclasses import dataclass
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
+from bs4 import BeautifulSoup
 
-from src import config  # WebBaseLoader보다 먼저 읽어 USER_AGENT 설정값을 적용한다
-from langchain_community.document_loaders import WebBaseLoader  # noqa: E402
+from src import config
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +28,12 @@ FAILURE_MESSAGES = {
     "network": "페이지에 연결하지 못했습니다",
     "no_content": "본문을 찾지 못했습니다(자바스크립트로 그리는 페이지 등)",
     "invalid_url": "올바른 웹 주소가 아닙니다",
+    "blocked_address": "내부망·로컬 주소라 안전을 위해 열지 않았습니다",
+    "too_large": "페이지가 너무 커서 읽지 않았습니다",
 }
+REDIRECT_CODES = (301, 302, 303, 307, 308)
+# 본문이 아닌 파일로 보는 응답 형식 (Content-Type 앞부분)
+NON_HTML_TYPES = ("image/", "video/", "audio/", "application/pdf", "application/zip", "application/octet-stream")
 # 1차에서 지원하지 않는 사이트 (도메인 끝부분 일치)
 VIDEO_DOMAINS = ("youtube.com", "youtu.be", "tiktok.com", "vimeo.com", "tv.naver.com")
 LOGIN_DOMAINS = ("instagram.com", "facebook.com", "x.com", "twitter.com", "threads.net")
@@ -115,20 +124,81 @@ def extract_text(soup) -> tuple[str, str]:
     return title, text
 
 
-def _collect_web(url: str, fetch_url: str) -> CollectResult:
-    """일반 HTML 페이지 수집기. WebBaseLoader로 가져오고 bs4로 제목·본문을 뽑는다."""
-    loader = WebBaseLoader(fetch_url, raise_for_status=True,
-                           requests_kwargs={"timeout": config.COLLECT_TIMEOUT_SECONDS},
-                           header_template={"User-Agent": config.COLLECT_USER_AGENT})
+def address_failure(url: str) -> str | None:
+    """요청 직전에 주소의 호스트를 IP로 풀어 공개 주소인지 본다. 내부망·루프백·링크로컬(클라우드 메타데이터 169.254.x.x)·
+    예약 주소면 'blocked_address'. 설정 허용 목록(COLLECT_ALLOWED_HOSTS)의 host·host:port는 통과. 문제가 없으면 None."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme not in ("http", "https") or not host:
+        return "invalid_url"
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    if host in config.COLLECT_ALLOWED_HOSTS or f"{host}:{port}" in config.COLLECT_ALLOWED_HOSTS:
+        return None
     try:
-        soup = loader.scrape()
-    except requests.exceptions.Timeout:
-        return CollectResult(url, False, failure="timeout", fetched_url=fetch_url)
-    except requests.exceptions.HTTPError:
-        return CollectResult(url, False, failure="http_error", fetched_url=fetch_url)
-    except requests.exceptions.RequestException:
-        return CollectResult(url, False, failure="network", fetched_url=fetch_url)
-    title, text = extract_text(soup)
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, UnicodeError, OSError):
+        return "network"
+    for *_, sockaddr in infos:
+        ip = ipaddress.ip_address(sockaddr[0].split("%")[0])
+        if ip.version == 6 and ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        if not ip.is_global or ip.is_multicast:  # 하나라도 공개 주소가 아니면 막는다
+            return "blocked_address"
+    return None
+
+
+def fetch_html(fetch_url: str) -> tuple[str, str | None, str]:
+    """페이지를 가져와 (HTML 글, 실패 코드, 마지막 주소)를 돌려준다. 리다이렉트는 직접 따라가며 홉마다 주소를 검사하고,
+    전체 시간(COLLECT_TIMEOUT_SECONDS)·크기(COLLECT_MAX_BYTES)를 넘으면 끊는다. 본문은 도착한 만큼씩(read1) 받아,
+    조금씩 흘려보내는 서버도 '전체 한도 + 한 번 읽기 대기(COLLECT_READ_TIMEOUT_SECONDS)' 안에 끝난다. (R2)"""
+    deadline = time.monotonic() + config.COLLECT_TIMEOUT_SECONDS
+    url = fetch_url
+    with requests.Session() as session:
+        session.headers["User-Agent"] = config.COLLECT_USER_AGENT
+        for _ in range(config.COLLECT_MAX_REDIRECTS + 1):
+            failure = address_failure(url)
+            if failure:
+                return "", failure, url
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return "", "timeout", url
+            try:
+                resp = session.get(url, stream=True, allow_redirects=False,
+                                   timeout=(remaining, min(remaining, config.COLLECT_READ_TIMEOUT_SECONDS)))
+            except requests.exceptions.Timeout:
+                return "", "timeout", url
+            except requests.exceptions.RequestException:
+                return "", "network", url
+            with resp:
+                if resp.status_code in REDIRECT_CODES and resp.headers.get("Location"):
+                    url = urljoin(url, resp.headers["Location"])
+                    continue
+                if resp.status_code >= 400:
+                    return "", "http_error", url
+                if resp.headers.get("Content-Type", "").lower().startswith(NON_HTML_TYPES):
+                    return "", "not_html", url
+                data = bytearray()
+                try:
+                    while piece := resp.raw.read1(65_536, decode_content=True):  # 도착한 만큼 (압축은 풀어서 센다)
+                        data += piece
+                        if len(data) > config.COLLECT_MAX_BYTES:
+                            return "", "too_large", url
+                        if time.monotonic() > deadline:
+                            return "", "timeout", url
+                except Exception as e:  # 읽기 중 시간 초과·연결 끊김 (urllib3 예외)
+                    return "", ("timeout" if "timed out" in str(e).lower() else "network"), url
+                resp._content = bytes(data)  # 받은 본문으로 인코딩을 추정한다(WebBaseLoader와 같은 apparent_encoding)
+                resp.encoding = resp.apparent_encoding
+                return resp.text, None, url
+    return "", "http_error", url  # 리다이렉트가 너무 많다
+
+
+def _collect_web(url: str, fetch_url: str) -> CollectResult:
+    """일반 HTML 페이지 수집기. fetch_html로 가져오고 bs4로 제목·본문을 뽑는다."""
+    html, failure, fetched = fetch_html(fetch_url)
+    if failure:
+        return CollectResult(url, False, failure=failure, fetched_url=fetched)
+    title, text = extract_text(BeautifulSoup(html, "html.parser"))
     if len(text) < config.COLLECT_MIN_CHARS:
         return CollectResult(url, False, title=title, failure="no_content", fetched_url=fetch_url)
     truncated = len(text) > config.COLLECT_MAX_CHARS
