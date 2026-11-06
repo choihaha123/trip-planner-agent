@@ -121,8 +121,8 @@ python -m evaluation.run_eval --ids 1,17   # 일부만 실행 (합격 여부는 
 - 합격 기준: 전체 80% 이상 + guardrail 전부 통과 (판정은 코드 검사 + 일부 항목만 Haiku 채점, 전체 실행에서만 판정, `docs/EVALUATION.md`)
 - 결과: `evaluation/results/eval_날짜시각.json`
 - 리포트
-  - [`evaluation/eval_report_v2.md`](evaluation/eval_report_v2.md) — **최신(Phase 7 수정 후)**: 공식 **17/20 (85%), guardrail 3/3, 합격**. 전체 3회 실행 85%·95%·85%, 실패 원인 분석과 남은 과제
-  - [`evaluation/eval_report.md`](evaluation/eval_report.md) — 1차 제출 시점(v1 평가 데이터) 20/20
+  - [`evaluation/round2_report.md`](evaluation/round2_report.md) — **최신(Phase 7 수정 후)**: 공식 **17/20 (85%), guardrail 3/3, 합격**. 전체 3회 실행 85%·95%·85%, 실패 원인 분석과 남은 과제
+  - [`evaluation/round1_report.md`](evaluation/round1_report.md) — 1차 제출 시점(v1 평가 데이터) 20/20
 
 ## 프로젝트 구조
 ```
@@ -169,7 +169,7 @@ docs/                        기획서·구현 명세·평가 기준·시나리�
 - 웹페이지 수집: requests + BeautifulSoup (주소 검사·시간·크기 제한을 직접 처리)
 
 ## 알려진 한계
-- 평가를 세 번 돌리면 실패 케이스가 매번 달랐습니다(85%·95%·85%). 날씨 출처를 빠뜨리거나, 공식 KB 대신 웹 출처를 인용하거나, 저장한 글을 검색하지 않고 답하는 경우가 가끔 있습니다(`evaluation/eval_report_v2.md` 5.2절).
+- 평가를 세 번 돌리면 실패 케이스가 매번 달랐습니다(85%·95%·85%). 날씨 출처를 빠뜨리거나, 공식 KB 대신 웹 출처를 인용하거나, 저장한 글을 검색하지 않고 답하는 경우가 가끔 있습니다(`evaluation/round2_report.md` 5.2절).
 - 일정표는 구체성 검사 재시도까지 포함해 1~2분 걸릴 수 있습니다.
 - 2차 점검에서 나온 지적(상대 날짜 계산 오류 가능성, 비용 상한, DNS 리바인딩 등 보안, 로그 관리 등)은 `docs/TASKS.md` Phase 8에 정리돼 있으며 아직 반영하지 않았습니다. CLI와 웹은 로컬 실행(127.0.0.1)을 전제로 합니다.
 
@@ -181,5 +181,5 @@ docs/                        기획서·구현 명세·평가 기준·시나리�
 - [`docs/SCENARIOS.md`](docs/SCENARIOS.md): 1차 완료 시나리오
 - [`docs/OPEN_ISSUES.md`](docs/OPEN_ISSUES.md): 미결 항목
 - [`docs/TASKS.md`](docs/TASKS.md): 작업 계획서
-- [`evaluation/eval_report_v2.md`](evaluation/eval_report_v2.md): 평가 리포트 v2 (최신, Phase 7 수정 후)
-- [`evaluation/eval_report.md`](evaluation/eval_report.md): 평가 리포트 v1 (1차 제출 시점)
+- [`evaluation/round2_report.md`](evaluation/round2_report.md): 평가 리포트 v2 (최신, Phase 7 수정 후)
+- [`evaluation/round1_report.md`](evaluation/round1_report.md): 평가 리포트 v1 (1차 제출 시점)

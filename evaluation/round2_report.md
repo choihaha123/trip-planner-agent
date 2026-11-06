@@ -1,6 +1,6 @@
 # 평가 리포트 v2 — Phase 7 수정 후 재평가
 
-> 기존 리포트(`evaluation/eval_report.md`, 1차 제출·UX 후속 재평가)는 그대로 두고, 이 문서는 **Phase 7(qa-reviewer·ux-critic 종합 비평 후속 수정) 이후**의 평가만 다룬다.
+> 기존 리포트(`evaluation/round1_report.md`, 1차 제출·UX 후속 재평가)는 그대로 두고, 이 문서는 **Phase 7(qa-reviewer·ux-critic 종합 비평 후속 수정) 이후**의 평가만 다룬다.
 > 평가 기준: `docs/EVALUATION.md` · 작업 기록: `docs/TASKS.md` Phase 7 · 실행 일시: 2026-11-06
 
 ---
