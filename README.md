@@ -2,7 +2,7 @@
 
 LangChain·LangGraph와 Amazon Bedrock(Claude)으로 만든 여행 에이전트입니다. CLI, 웹 화면(회원가입·로그인), MCP 서버(Claude Desktop 등)에서 같은 에이전트를 씁니다. 일정표·예산·날씨·환율·여행 Q&A를 출처와 함께 답하고, 사용자가 넣은 여행 글 URL을 판정해 사용자별로 저장해 두었다가 이후 대화에서도 근거로 씁니다.
 
-### 주요 기능
+## 주요 기능
 - **일정표**: 빠진 정보(기간·인원·출발지·예산)와 취향(꼭 갈 곳·여행 스타일·관심사)을 한 번에 되묻고(이미 말한 것은 다시 묻지 않음), 일자별 장소·이동수단·출처·일차별 비용·예산 판정이 들어간 일정표를 프로그램이 정해진 형식으로 보여줍니다. 식사 장소에 가게 이름이 없거나 공항을 정하지 않는 등 막연한 일정은 프로그램이 한 번 돌려보내 구체적으로 고치게 합니다. 일정을 고치면 맨 위에 **바뀐 점**(교체·추가·빠짐·예산 변화)을 붙이고, 바꾸지 않은 항목의 출처·📌는 그대로 둡니다.
 - **예산 계산**: 곱셈·합계·객실 수·환율 환산·예산 판정(예산 안/근접/초과, 초과 시 조정안)을 모두 파이썬이 계산합니다. 숙박은 '객실 1박 단가 × 박 수'로만 받고, 일정표의 입장료 일차는 일정의 장소 일차에 맞춥니다.
 - **날씨·환율**: Open-Meteo 예보(현지 기준 16일, 범위 밖은 대체 정보 표시), open.er-api.com 환율. 상대 날짜("다음 주 토요일")도 파이썬이 계산합니다.
@@ -10,7 +10,7 @@ LangChain·LangGraph와 Amazon Bedrock(Claude)으로 만든 여행 에이전트�
 - **URL 참고**: 메시지 속 URL(최대 5개)을 동시에 수집(한 링크당 최대 15초·3MB, 내부망·로컬 주소는 열지 않음) → 여행 관련도·지시문 판정 → 통과한 글만 사용자별로 저장합니다. 답변 끝 '※ 링크 처리 결과'에 저장한 링크(✔)와 못 쓴 링크(✖, 이유와 다음 행동)를 알려 줍니다. 링크만 보내면 바로 저장 결과만 답합니다. 답변 출처 중 내가 저장한 글에는 `📌 내가 저장한 자료 (저장일)`이 붙고, 저장한 링크는 `/saved`로 보고 `/forget <번호>`로 지웁니다.
 - **장기 기억**: 대화에서 직접 말한 이름·여행 선호·답변 스타일을 사용자별로 기억해 새 대화에서도 반영합니다. 기억하면 답변 끝에 `※ 기억했어요: …`로 알립니다.
 - **웹 화면**: 계정마다 대화 여러 개(제목 자동, 이어 쓰기·삭제), 답변 글자 스트리밍과 진행 단계 표시, 저장한 링크 패널(추가·목록·삭제), 기억 패널(보기·삭제)을 제공합니다. 일정표는 **카드**(일차 탭·타임라인·예산 카드)로 보여 주고 **이미지(PNG)로 저장**할 수 있습니다. 답변은 대화마다 따로 만들어 서로 기다리지 않고, **중지** 버튼으로 멈출 수 있으며, 새로고침해도 답변은 끝까지 만들어져 다시 열면 이어 봅니다.
-- **MCP 서버**: Claude Desktop 같은 MCP 클라이언트에 연결해, 채팅창에서 이 에이전트(일정표·출처·링크 저장·장기 기억)와 예산·환율·날짜·날씨 계산 도구를 씁니다. 각자 자기 PC에서 실행하며 비용은 자기 `.env`의 AWS 계정에서 나갑니다(아래 7-2).
+- **MCP 서버**: Claude Desktop 같은 MCP 클라이언트에 연결해, 채팅창에서 이 에이전트(일정표·출처·링크 저장·장기 기억)와 예산·환율·날짜·날씨 계산 도구를 씁니다. 각자 자기 PC에서 실행하며 비용은 자기 `.env`의 AWS 계정에서 나갑니다(아래 '실행 방법' 8).
 - **안전장치**: 여행 무관 요청 거절, 시스템 프롬프트 비공개, 사용자별 자료·대화 격리, 링크·웹 검색 결과 속 숨은 지시문(간접 프롬프트 인젝션: 제목·우회 표현·전각/폭 0 문자 포함) 차단, 가짜 출처 태그 무력화, 검색되지 않은 URL은 출처로 인정하지 않음, 출처 없는 가격에 '(출처 없음, 사용자 확인 필요)' 표시.
 
 ## 활용한 패턴 (Day 1~7)
@@ -143,7 +143,7 @@ uvicorn src.web.app:app       # 프로젝트 루트에서. 브라우저로 http:
 
 > ✈ 숨은 재미: 로고를 눌러 보거나, 키보드로 ↑↑↓↓←→←→BA 를 입력해 보세요.
 
-### 7-2) Claude Desktop에서 쓰기 (MCP 서버)
+### 8) Claude Desktop에서 쓰기 (MCP 서버)
 이 에이전트를 **MCP 서버**로 띄워 Claude Desktop 같은 MCP 클라이언트에서 쓸 수 있습니다. 서버는 **각자 자기 PC에서** 실행합니다(Claude Desktop이 자식 프로세스로 띄우는 stdio 방식).
 
 **준비물**
@@ -192,13 +192,13 @@ uvicorn src.web.app:app       # 프로젝트 루트에서. 브라우저로 http:
 - 저장한 링크·기억의 목록 보기·삭제(기억은 추가·수정도)는 MCP에서 하지 않고 CLI(`/saved`·`/memory`·`/remember`)나 웹 화면에서 합니다.
 - 연결이 안 되면: 경로(특히 `\\`)와 venv 파이썬 경로를 확인하고, `logs/app.jsonl`의 `mcp_start`·`mcp_agent_error`를 봅니다. 서버를 직접 실행해 오류를 볼 수도 있습니다: `.venv\Scripts\python.exe src\mcp_server.py`(오류가 없으면 입력을 기다리며 멈춰 있는 것이 정상, Ctrl+C로 종료).
 
-### 로그 보기
+### 9) 로그 보기
 ```powershell
 Get-Content logs\app.jsonl -Tail 20          # 운영 이벤트 (URL 판정·거절, 실패, 대체 모델 전환 등)
 Get-Content logs\trace.jsonl -Wait -Tail 0   # 실행 추적 (질문마다 LLM·도구 호출, 소요 시간, 토큰 수)
 ```
 
-### 실행 중 생기는 파일 (git 제외)
+### 10) 실행 중 생기는 파일 (git 제외)
 - `storage/checkpoints.sqlite` 대화 기록 (CLI·웹 공통)
 - `storage/chroma/` 벡터DB (기본 KB / 사용자 수집 컬렉션)
 - `storage/memory.sqlite` 장기 기억, `storage/web.sqlite` 웹 계정·세션·대화 목록
@@ -218,13 +218,16 @@ python -m evaluation.run_eval --ids 1,17   # 일부만 실행 (합격 여부는 
   - [`evaluation/round2_report.md`](evaluation/round2_report.md) — 1차 제출 시점(v1 평가 데이터) 20/20
   - [`evaluation/round1_report.md`](evaluation/round1_report.md) — v1 평가 데이터 첫 실행(수정 전) 16/20, 실패 4건 분석
 
-### 인-아웃 세트 통과율 (자체 평가, 20건: positive 8 · negative 4 · edge 5 · guardrail 3)
+### 인-아웃 세트 통과율 (자체 평가)
+- 평가 세트 20건: positive 8 · negative 4 · edge 5 · guardrail 3
 - 1차 (v1 평가 세트, 첫 실행): 16 / 20 통과 ([`round1_report.md`](evaluation/round1_report.md))
 - 2차 (v1, 개선 후): 20 / 20 통과 ([`round2_report.md`](evaluation/round2_report.md))
 - 개선폭: +4건 (주요 개선: 실패 4건이 모두 LLM이 프롬프트로 지시한 절차를 건너뛴 경우여서 코드로 강제 — 검색 순서 고정(KB 먼저 → 웹)과 Haiku 관련성 필터, 가격 출처 자동 표기, `check_trip_info` 호출 강제)
 - 참고: 더 어려운 v2 평가 세트로 바꾼 뒤 3회 실행 17·19·17 / 20, 공식 17 / 20 (85%), guardrail 3/3 합격 ([`round3_report.md`](evaluation/round3_report.md))
 
 ## 아키텍처
+
+### 구성도
 ```
  CLI (main.py) ──────┐
  웹 (FastAPI + SSE) ─┼──▶ 에이전트 (create_agent · Bedrock Claude Sonnet 4.5)
@@ -235,31 +238,6 @@ python -m evaluation.run_eval --ids 1,17   # 일부만 실행 (합격 여부는 
   Chroma(기본 KB+사용자 링크)  Tavily·Open-Meteo·환율   예산·날짜·정보 확인       render_itinerary
   + Haiku 관련성 필터
  저장소: SQLite 체크포인터(대화) · SqliteStore(장기 기억) · web.sqlite(계정) · logs/trace.jsonl(추적)
-```
-한 턴 안의 단계별 흐름은 아래 [한 턴의 처리 흐름](#한-턴의-처리-흐름)을 참고하세요.
-
-## 프로젝트 구조
-```
-main.py                      CLI 진입점 (대화 루프, --user / --thread / --reset, /new /saved /forget /memory /remember /forget-memory)
-src/agent.py                 에이전트 그래프: create_agent, 시스템 프롬프트(가드레일·날짜), 미들웨어·도구 연결, 대화 기록
-src/tools.py                 도구: 여행 정보 검색·웹 검색·환율·날씨·날짜·예산·정보 확인·일정표, 가격 출처 표시
-src/retriever.py             RAG: 청킹·임베딩(병렬)·Chroma 저장·검색, 사용자별 분리·초기화
-src/memory.py                장기 기억: user_id별 이름·여행 선호·답변 스타일 저장·자동 추출·프롬프트 반영
-src/middleware.py            URL 전처리: URL 추출 → 동시 수집 → 관련도·지시문 판정 → 저장, 링크 처리 결과·저장 자료 없음 안내
-src/collector.py             웹페이지 수집·본문 추출, 수집 실패 분류
-src/tracing.py               실행 추적 미들웨어 (LLM·도구 호출 기록)
-src/config.py                설정값·.env 읽기·로그 설정
-src/preprocess/build_kb.py   기본 KB 적재 스크립트
-src/web/app.py               웹 앱(FastAPI): 화면 제공, 로그인·대화·링크·기억 API, 진행 단계·글자 스트리밍(SSE)
-src/web/auth.py              회원가입·로그인·세션 (비밀번호 scrypt 해시, HttpOnly 쿠키)
-src/web/threads.py           사용자별 대화 목록 (제목·최근 순·삭제)
-src/web/runs.py              대화별 백그라운드 답변 실행 (이벤트 쌓기·다시 구독·중지·동시 실행 상한)
-src/web/static/              화면 (index.html, app.js, style.css — 빌드 도구 없음. CDN: Pretendard 글꼴, 이미지 저장용 html2canvas)
-src/mcp_server.py            MCP 서버 (Claude Desktop 등, stdio): ask_trip_agent + 예산·환율·날짜·날씨 보조 도구
-data/kb/                     기본 KB 원본 문서 (오사카·도쿄·교토 공식 관광 자료, 출처 머리말 포함)
-evaluation/                  평가 데이터·스크립트·인젝션 테스트 페이지·결과·리포트
-tests/                       단위 테스트
-docs/                        기획서·구현 명세·평가 기준·시나리오·작업 계획
 ```
 
 ### 한 턴의 처리 흐름
@@ -285,6 +263,30 @@ docs/                        기획서·구현 명세·평가 기준·시나리�
 - 웹 화면: FastAPI + uvicorn, 글꼴 Pretendard(CDN), 일정표 이미지 저장 html2canvas 1.4.1(CDN)
 - 웹페이지 수집: requests + BeautifulSoup (주소 검사·시간·크기 제한을 직접 처리)
 - MCP 서버: 공식 `mcp` Python SDK 2.3 (`MCPServer`, stdio)
+
+## 프로젝트 구조
+```
+main.py                      CLI 진입점 (대화 루프, --user / --thread / --reset, /new /saved /forget /memory /remember /forget-memory)
+src/agent.py                 에이전트 그래프: create_agent, 시스템 프롬프트(가드레일·날짜), 미들웨어·도구 연결, 대화 기록
+src/tools.py                 도구: 여행 정보 검색·웹 검색·환율·날씨·날짜·예산·정보 확인·일정표, 가격 출처 표시
+src/retriever.py             RAG: 청킹·임베딩(병렬)·Chroma 저장·검색, 사용자별 분리·초기화
+src/memory.py                장기 기억: user_id별 이름·여행 선호·답변 스타일 저장·자동 추출·프롬프트 반영
+src/middleware.py            URL 전처리: URL 추출 → 동시 수집 → 관련도·지시문 판정 → 저장, 링크 처리 결과·저장 자료 없음 안내
+src/collector.py             웹페이지 수집·본문 추출, 수집 실패 분류
+src/tracing.py               실행 추적 미들웨어 (LLM·도구 호출 기록)
+src/config.py                설정값·.env 읽기·로그 설정
+src/preprocess/build_kb.py   기본 KB 적재 스크립트
+src/web/app.py               웹 앱(FastAPI): 화면 제공, 로그인·대화·링크·기억 API, 진행 단계·글자 스트리밍(SSE)
+src/web/auth.py              회원가입·로그인·세션 (비밀번호 scrypt 해시, HttpOnly 쿠키)
+src/web/threads.py           사용자별 대화 목록 (제목·최근 순·삭제)
+src/web/runs.py              대화별 백그라운드 답변 실행 (이벤트 쌓기·다시 구독·중지·동시 실행 상한)
+src/web/static/              화면 (index.html, app.js, style.css — 빌드 도구 없음. CDN: Pretendard 글꼴, 이미지 저장용 html2canvas)
+src/mcp_server.py            MCP 서버 (Claude Desktop 등, stdio): ask_trip_agent + 예산·환율·날짜·날씨 보조 도구
+data/kb/                     기본 KB 원본 문서 (오사카·도쿄·교토 공식 관광 자료, 출처 머리말 포함)
+evaluation/                  평가 데이터·스크립트·인젝션 테스트 페이지·결과·리포트
+tests/                       단위 테스트
+docs/                        기획서·구현 명세·평가 기준·시나리오·작업 계획
+```
 
 ## 트라이앤에러 회고
 **시도했지만 실패한 접근**
