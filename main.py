@@ -2,7 +2,8 @@
 # 사용법: python main.py [--user <user_id>] [--thread <thread_id>]
 #         python main.py --reset <user_id>   (저장한 링크 모두 지우기)
 # 대화 중 명령: /new 새 대화, /saved 저장한 링크 목록, /forget <번호> 링크 지우기,
-#               /memory 기억 보기, /forget-memory <번호> 기억 지우기, /exit 종료 (답변 중 Ctrl+C는 그 답변만 취소)
+#               /memory 기억 보기, /remember <항목> <내용> 기억 추가·수정, /forget-memory <번호> 기억 지우기,
+#               /exit 종료 (답변 중 Ctrl+C는 그 답변만 취소)
 import argparse
 import logging
 import re
@@ -19,7 +20,7 @@ from src.agent import (
     validate_user_id,
 )
 from src.config import DEFAULT_USER_ID, MEMORY_FIELDS, setup_logging
-from src.memory import delete_memory, get_memory, reset_memory
+from src.memory import MemoryInputError, delete_memory, get_memory, reset_memory, save_manual_memory
 from src.middleware import extract_urls
 from src.retriever import delete_user_source, list_user_pages, reset_user
 
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 # 시작 화면·--help에 보여 줄 링크 저장 기능 안내 (UX 평가: 이 기능을 알 방법이 없었다)
 LINK_TIP = "여행 글 링크를 붙여넣으면 저장해 두었다가, 나중 대화에서도 그 글을 근거로 답합니다."
 COMMANDS_HELP = ("/new 새 대화, /saved 저장한 링크 목록, /forget <번호> 링크 지우기, "
-                 "/memory 기억 보기, /forget-memory <번호> 기억 지우기, /exit 종료")
+                 "/memory 기억 보기, /remember <항목> <내용> 기억 추가·수정, /forget-memory <번호> 기억 지우기, /exit 종료")
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,8 +69,9 @@ def memory_command(user_id: str) -> str:
     """/memory: 현재 user_id의 장기 기억을 번호·항목·값으로 보여 준다. LLM을 거치지 않는다. (SERVICE 2.9)"""
     items = memory_items(user_id)
     if not items:
-        return "기억하고 있는 정보가 없습니다. 이름·여행 선호·답변 스타일을 말씀해 주시면 기억해 둡니다."
-    lines = [f"기억하고 있는 정보 {len(items)}개  (지우려면 /forget-memory <번호>)"]
+        return ("기억하고 있는 정보가 없습니다. 이름·여행 선호·답변 스타일을 말씀해 주시거나 "
+                "/remember <항목> <내용>으로 직접 넣으면 기억해 둡니다. 예: /remember 선호 매운 음식은 못 먹음")
+    lines = [f"기억하고 있는 정보 {len(items)}개  (추가·수정: /remember <항목> <내용>, 지우기: /forget-memory <번호>)"]
     lines += [f" {i}. {MEMORY_FIELDS[field]}: {value}" for i, (field, value) in enumerate(items, 1)]
     return "\n".join(lines)
 
@@ -90,6 +92,37 @@ def forget_memory_command(user_id: str, arg: str) -> str:
     field = matches[0]
     delete_memory(user_id, field)
     return f"'{MEMORY_FIELDS[field]}' 기억을 지웠습니다. 이제 답변에 쓰지 않습니다."
+
+
+def match_memory_field(arg: str) -> tuple[str | None, str]:
+    """'/remember' 뒤 글에서 항목과 내용을 나눈다. 항목은 키(name 등), 표시 이름('이름·호칭', '여행 선호'),
+    또는 표시 이름의 낱말('이름', '호칭', '선호', '스타일')로 쓴다. 맞는 항목이 없으면 (None, 원래 글)."""
+    words = arg.split()
+    for size in (2, 1):  # '여행 선호'처럼 두 낱말 이름을 먼저 본다
+        if len(words) <= size - 1:
+            continue
+        head = re.sub(r"[\s·]", "", "".join(words[:size])).lower()
+        for field, label in MEMORY_FIELDS.items():
+            names = {field, re.sub(r"[\s·]", "", label), *re.split(r"[\s·]", label)}
+            if head in names:
+                return field, " ".join(words[size:])
+    return None, arg
+
+
+def remember_command(user_id: str, arg: str) -> str:
+    """/remember <항목> <내용>: 기억 항목 하나를 직접 추가·수정한다(LLM을 거치지 않음, 웹 기억 패널과 같은 검사). (TASKS Phase 9 F1)
+    예: /remember 이름 민수, /remember 여행 선호 매운 음식은 못 먹음, /remember 스타일 표로 짧게"""
+    field, value = match_memory_field(arg)
+    if field is None:
+        names = ", ".join(MEMORY_FIELDS.values())
+        return f"추가·수정할 항목을 앞에 써 주세요({names}). 예: /remember 선호 매운 음식은 못 먹음"
+    try:
+        changed = save_manual_memory(user_id, field, value)
+    except MemoryInputError as e:
+        return str(e)
+    if not changed:
+        return f"'{MEMORY_FIELDS[field]}' 기억이 이미 같은 내용입니다."
+    return f"'{MEMORY_FIELDS[field]}' 기억을 저장했습니다: {get_memory(user_id)[field]} (다음 답변부터 반영, 보기: /memory)"
 
 
 # 새 대화를 시작하는 방법(채널별). 웹에는 /new 명령이 없다(TASKS Phase 8 S4: 웹 오류 안내가 CLI 명령을 알려 주던 문제).
@@ -159,6 +192,9 @@ def chat_loop(agent, user_id: str, thread_id: str) -> None:
             continue
         if message == "/memory":
             print(memory_command(user_id))
+            continue
+        if message == "/remember" or message.startswith("/remember "):
+            print(remember_command(user_id, message[len("/remember"):].strip()))
             continue
         if message == "/forget-memory" or message.startswith("/forget-memory "):
             print(forget_memory_command(user_id, message[len("/forget-memory"):].strip()))

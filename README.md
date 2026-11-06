@@ -33,7 +33,7 @@ python main.py
 > 다음 주 토요일은 며칠이야?
 > /exit                       # 마지막 줄에 나오는 thread_id를 복사해 둔다
 ```
-대화 중 명령: `/new` 새 대화(새 thread_id), `/saved` 저장한 링크 목록, `/forget <번호>` 그 링크 지우기, `/memory` 기억 보기, `/forget-memory <번호>` 그 기억 지우기, `/exit` 종료. 답변을 기다리는 중 `Ctrl+C`를 누르면 그 답변만 취소되고 대화는 이어집니다.
+대화 중 명령: `/new` 새 대화(새 thread_id), `/saved` 저장한 링크 목록, `/forget <번호>` 그 링크 지우기, `/memory` 기억 보기, `/remember <항목> <내용>` 기억 직접 추가·수정(예: `/remember 선호 매운 음식은 못 먹음`), `/forget-memory <번호>` 그 기억 지우기, `/exit` 종료. 답변을 기다리는 중 `Ctrl+C`를 누르면 그 답변만 취소되고 대화는 이어집니다.
 
 > 💡 여행 글 링크를 붙여넣으면 저장해 두었다가, 나중 대화(`/new`, 다음 실행)에서도 그 글을 근거로 답합니다. 아래 6)의 'URL 참고'·'링크만 저장' 예시를 보세요.
 >
@@ -97,7 +97,7 @@ uvicorn src.web.app:app       # 프로젝트 루트에서. 브라우저로 http:
 - 답변을 기다리는 동안 보내기 버튼이 **중지**로 바뀝니다. 다른 대화에서는 그동안에도 보낼 수 있고, 다른 사용자도 기다리지 않습니다(서버 전체 동시 답변 수는 `WEB_MAX_CONCURRENT_RUNS`, 기본 4). 새로고침하거나 다른 대화를 보다 돌아와도 진행 상황을 이어 봅니다.
 - **일정표 카드**: 일차 탭, 시간대별 타임라인(장소 사이 이동), 요금·출처·📌 배지, 바뀐 항목 강조, 일차별 비용, 예산 카드로 보여 줍니다. 원래 글은 '글로 보기'에 접혀 있습니다. 카드 오른쪽 위 **이미지로 저장**을 누르면 모든 일차를 펼친 PNG를 내려받습니다(처음 누를 때 `html2canvas`를 CDN에서 불러옴).
 - 위쪽 **저장한 링크** 버튼: 링크를 붙여넣어 저장하면(대화와 같은 판정) ✓ 저장함 / ✕ 못 씀과 이유가 보이고, 저장한 링크 목록을 보고 지울 수 있습니다. 대화창에 넣은 링크도 여기에 모입니다.
-- 위쪽 **기억** 버튼: 기억한 이름·여행 선호·답변 스타일을 보고 항목별로 지웁니다.
+- 위쪽 **기억** 버튼: 기억한 이름·여행 선호·답변 스타일을 보고, 항목별로 직접 추가·수정하거나 지웁니다(직접 적은 문장은 대화 중 자동 저장이 바꿔 쓰지 않습니다).
 - 대화 기록·저장한 링크·기억은 CLI와 같은 저장소를 쓰지만, 웹 계정의 사용자 ID는 내부 ID(`u_…`)라 CLI의 `--user` 이름과는 따로입니다. 설정값(`WEB_DB`, `WEB_SESSION_DAYS`, HTTPS 배포 시 `WEB_COOKIE_SECURE=true` 등)은 `.env.example`을 참고합니다.
 
 **화면 예시**
@@ -160,7 +160,7 @@ uvicorn src.web.app:app       # 프로젝트 루트에서. 브라우저로 http:
 
 **알아 둘 점**
 - 사용자 ID는 `.env`의 `MCP_USER_ID`(기본 `mcp_user`)로 고정되고 대화로 바꿀 수 없습니다. CLI·웹과 저장 링크·기억이 따로이며, CLI 사용자와 함께 쓰려면 `MCP_USER_ID=alice`처럼 그 이름을 넣습니다.
-- 저장한 링크·기억의 목록 보기·삭제는 MCP에서 하지 않고 CLI(`/saved`·`/memory`)나 웹 화면에서 합니다.
+- 저장한 링크·기억의 목록 보기·삭제(기억은 추가·수정도)는 MCP에서 하지 않고 CLI(`/saved`·`/memory`·`/remember`)나 웹 화면에서 합니다.
 - 연결이 안 되면: 경로(특히 `\\`)와 venv 파이썬 경로를 확인하고, `logs/app.jsonl`의 `mcp_start`·`mcp_agent_error`를 봅니다. 서버를 직접 실행해 오류를 볼 수도 있습니다: `.venv\Scripts\python.exe src\mcp_server.py`(오류가 없으면 입력을 기다리며 멈춰 있는 것이 정상, Ctrl+C로 종료).
 
 ### 로그 보기
@@ -177,7 +177,7 @@ Get-Content logs\trace.jsonl -Wait -Tail 0   # 실행 추적 (질문마다 LLM·
 
 ## 테스트와 평가
 ```powershell
-python -m unittest discover tests          # 단위 테스트 189개 (예산·날짜, 장기 기억, 장애 내성·링크 안내·수집 보안·인젝션, 일정표 검사·바뀐 점, 웹 API·동시 실행, MCP 서버) — Bedrock 호출 없음
+python -m unittest discover tests          # 단위 테스트 222개 (예산·날짜, 장기 기억, 장애 내성·링크 안내·수집 보안·인젝션, 일정표 검사·바뀐 점, 웹 API·동시 실행, MCP 서버) — Bedrock 호출 없음
 python -m evaluation.run_eval              # 평가 20건 전체 실행 (약 7~13분, 합격 여부 판정)
 python -m evaluation.run_eval --ids 1,17   # 일부만 실행 (합격 여부는 판정하지 않음)
 ```
@@ -190,7 +190,7 @@ python -m evaluation.run_eval --ids 1,17   # 일부만 실행 (합격 여부는 
 
 ## 프로젝트 구조
 ```
-main.py                      CLI 진입점 (대화 루프, --user / --thread / --reset, /new /saved /forget /memory /forget-memory)
+main.py                      CLI 진입점 (대화 루프, --user / --thread / --reset, /new /saved /forget /memory /remember /forget-memory)
 src/agent.py                 에이전트 그래프: create_agent, 시스템 프롬프트(가드레일·날짜), 미들웨어·도구 연결, 대화 기록
 src/tools.py                 도구: 여행 정보 검색·웹 검색·환율·날씨·날짜·예산·정보 확인·일정표, 가격 출처 표시
 src/retriever.py             RAG: 청킹·임베딩(병렬)·Chroma 저장·검색, 사용자별 분리·초기화

@@ -384,7 +384,13 @@ evaluation/        test_queries.csv 와 평가 리포트
 - **확인·삭제** (`main.py`, 2026-11-05 Step 13-4): 대화 루프 명령, 에이전트를 부르지 않는다.
   - `/memory` → `memory_command`: `get_memory` 결과를 설정 목록 순서로 ' N. 표시 이름: 값'. 없으면 안내.
   - `/forget-memory <번호|항목>` → `forget_memory_command`: `/memory` 번호, 항목 키(`name` 등), 표시 이름의 일부('이름', '선호' 등, 공백·'·' 무시) 중 **정확히 한 항목**에 맞을 때만 `delete_memory`. 아니면 지우지 않고 가능한 번호 안내.
-  - 시스템 프롬프트 [가드레일]: 대화로 기억 보기·지우기를 요청하면 두 명령을 안내하고 지운 척하지 않는다. `--reset`은 2.7.
+  - `/remember <항목> <내용>` → `remember_command` (2026-11-06 TASKS Phase 9 F1): `match_memory_field`가 앞 낱말(두 낱말 이름 먼저)을 항목 키·표시 이름·표시 이름의 낱말('이름'·'호칭'·'선호'·'스타일' 등)과 대조해 항목과 내용을 나누고, `memory.save_manual_memory`로 저장한다. 항목이 없으면 항목 목록과 예시, 검사 실패는 `MemoryInputError` 문구를 그대로 안내한다.
+  - 시스템 프롬프트 [가드레일]: 대화로 기억 보기·지우기를 요청하면 명령(보기·직접 추가·수정·지우기)을 안내하고 지운 척하지 않는다. `--reset`은 2.7.
+- **직접 추가·수정** (`memory.py`, 2026-11-06 TASKS Phase 9 F1, 사용자 결정: 추천안대로)
+  - 저장 값에 `manual`(직접 입력) 표시를 둔다: `{value, updated_at, manual}`. `get_memory_entries`가 항목별 값·표시를 돌려주고, `get_memory`는 값만.
+  - `save_manual_memory(user_id, field, value)`: 설정 목록의 항목만, 공백 정리 뒤 빈 값·`MEMORY_VALUE_MAX_CHARS`(200자) 초과(자르지 않음)·`middleware.find_instruction_pattern`(링크 저장과 같은 지시문 정규식)에 걸리면 `MemoryInputError`(사용자에게 보여 줄 문구, `memory_manual_rejected` 로그). 통과하면 `save_memory(manual=True)`.
+  - 자동 추출과의 관계: `MemoryMiddleware.after_agent`가 직접 입력 항목을 판정 모델에 '(직접 입력)'으로 알리고(프롬프트: 기존 문장을 바꾸지 말고 뒤에 덧붙인다), 뽑은 값이 기존 문장을 공백 무시로 그대로 담을 때만(`keeps_manual_text`) 저장한다(직접 입력 표시 유지). 아니면 저장하지 않는다(`memory_manual_kept` 로그).
+  - 실측(Bedrock, 2026-11-06): `/remember 호칭 민수 대장님`·`/remember 스타일 세 줄 이내로 짧게` 뒤 새 대화에서 세 줄 답변, '나 기억해?'에 '안녕하세요, 민수 대장님!'. 한계: 호칭을 매 답변에 쓸지는 모델이 정한다(기존 프롬프트 규칙 그대로).
 
 ### 2.10 웹페이지 (TASKS Step 15)
 - **구성**: FastAPI(0.162) + uvicorn, 실행 `uvicorn src.web.app:app`(프로젝트 루트). 화면은 `src/web/static/`의 HTML/CSS/JS를 같은 앱이 제공(빌드 도구 없음). 에이전트 코어(`src/agent.py`)·저장 링크(`retriever`)·장기 기억(`memory`)은 CLI와 같은 함수를 쓴다.
@@ -427,9 +433,9 @@ evaluation/        test_queries.csv 와 평가 리포트
   - 잠금: Chroma 연결은 프로세스에서 하나를 같이 쓰고 대화 중 URL도 여러 스레드로 저장하므로 링크 API는 따로 잠금을 걸지 않는다(답변 중에도 링크를 저장·삭제할 수 있다).
   - 화면(`app.js`): 입력칸(여러 줄) + 저장 → '확인 중…' 안내 → 결과는 답변의 안내 블록과 같은 `splitNotices`·`renderNotices`로 그린다(✓·✕ 의미색). 목록은 최근 저장이 위, 제목(새 탭 링크)·URL·'MM/DD 저장'·× 삭제(목록 안 확인 단계). 대화 답변이 끝났을 때 패널이 열려 있으면 목록을 다시 불러온다(대화창에 넣은 링크 반영). 로그아웃 시 패널을 닫고 비운다.
   - 대화로 목록·삭제를 요청할 때의 안내: `AgentContext.channel`(`cli` 기본 / 웹은 `web`)에 따라 시스템 프롬프트의 저장 링크 안내 한 줄(`agent.SAVED_LINKS_GUIDE`)을 바꿔 넣는다. CLI는 `/saved`·`/forget <번호>`, 웹은 '화면 위쪽의 저장한 링크 버튼'. 실측: 웹에서 "내가 저장한 링크 목록 보여주고, 그 중에 하나 지워줘" → 버튼 안내, 지운 척 없음.
-- **기억 패널** (2026-11-05 Step 15-4 ②): 상단바 '기억' 버튼. 링크 패널과 같은 서랍이며 한 번에 하나만 열린다(`PANELS`·`openPanel`·`closePanels`, Esc로 닫힘, 기억 패널은 입력칸이 없어 패널 자체에 포커스).
-  - API: `GET /api/memory` → `[{field, label, value}]`(`memory.get_memory`, 설정 목록 `MEMORY_FIELDS` 순서, label은 표시 이름), `DELETE /api/memory/{field}` → `memory.delete_memory`, 설정 목록에 없거나 저장돼 있지 않으면 404. 기억 저장소는 프로세스에서 연결 하나를 같이 써(`check_same_thread=False`) 에이전트 잠금을 걸지 않는다.
-  - 화면: 항목마다 표시 이름(작게)·값·× 삭제(목록 안 확인 단계), 없으면 말하는 예시와 함께 안내. 대화 답변이 끝났을 때 열려 있는 패널을 다시 불러온다(`reloadOpenPanel`, 대화 중 기억 저장 반영).
+- **기억 패널** (2026-11-05 Step 15-4 ②): 상단바 '기억' 버튼. 링크 패널과 같은 서랍이며 한 번에 하나만 열린다(`PANELS`·`openPanel`·`closePanels`, Esc로 닫힘, 기억 패널은 '추가'·'수정'을 눌러야 입력칸이 열려 패널 자체에 포커스).
+  - API: `GET /api/memory` → `[{field, label, value, manual, max_chars}]`(`memory.get_memory_entries`, 설정 목록 `MEMORY_FIELDS`의 **모든 항목**을 순서대로, 없는 항목은 value 빈 문자열, label은 표시 이름. 2026-11-06 F1에서 바꿈: 전에는 저장된 항목만), `PUT /api/memory/{field}` `{value}` → `memory.save_manual_memory`(F1: 기억 항목이 아니면 404, `MemoryInputError`는 400과 그 문구, 응답 `{ok, changed, memory}`), `DELETE /api/memory/{field}` → `memory.delete_memory`, 설정 목록에 없거나 저장돼 있지 않으면 404. 기억 저장소는 프로세스에서 연결 하나를 같이 써(`check_same_thread=False`) 에이전트 잠금을 걸지 않는다.
+  - 화면: 설정 목록의 항목마다 표시 이름(작게, 직접 입력이면 '· 직접 입력')·값(없으면 '아직 없어요')·'수정'(없으면 '추가')·× 삭제(값이 있을 때만, 목록 안 확인 단계). '수정'·'추가'는 그 자리에 입력칸(`maxLength`=`max_chars`, 글자 수 표시)·취소·저장(`editMemory` → PUT)을 열고, 저장하면 목록을 다시 그리고 '○○ 기억을 저장했어요. 다음 답변부터 반영돼요.'(오류는 이유) 안내(F1). 기억이 하나도 없으면 직접 추가·말하는 예시 안내. 대화 답변이 끝났을 때 열려 있는 패널을 다시 불러온다(`reloadOpenPanel`, 대화 중 기억 저장 반영).
   - 웹용 문구: 시스템 프롬프트의 기억 안내 한 줄(`agent.MEMORY_GUIDE`)과 기억 알림 끝 안내(`memory.MEMORY_VIEW_HINTS`)를 channel별로 바꾼다. 화면은 알림을 시작 문구 `※ 기억했어요:`로 인식하므로 그대로다.
   - 실측(실제 서버·Bedrock, 두 계정): A "내 이름은 민수야. 매운 건 못 먹고, 답은 짧게 해줘. 오사카 저녁 메뉴…" → "민수님…" + `※ 기억했어요: … (보기: 위쪽 '기억' 버튼)`, `/api/memory` 3항목, B는 빈 목록·A 항목 삭제 404, 대화로 "기억 보여주고 이름은 지워줘" → '기억' 버튼 안내·지운 척 없음, 이름 삭제 후 새 대화 → 호칭 없이 짧게, 맵지 않은 메뉴.
 - **일정표 카드** (2026-11-06 Phase 7 R5-5, SERVICE 2.10 '나중에'에서 앞당김): 최종 답변이 `render_itinerary` 결과면, 아티팩트를 화면용 데이터로 바꿔(`tools.itinerary_view`) `done` 이벤트와 지난 메시지(`app.answer_view`)의 `itinerary`로 함께 보낸다. 줄글(`content`)은 '글로 보기'·CLI·평가용으로 그대로 둔다.

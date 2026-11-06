@@ -242,6 +242,17 @@ a:hover { text-decoration-color: currentColor; }
 .memory-item .value { font-size: 14px; }
 .memory-item .del { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 4px; border-radius: 6px; }
 .memory-item .del:hover { color: var(--text); background: rgba(24, 24, 26, .06); }
+/* 기억 직접 추가·수정 (F1) */
+.memory-item .actions { display: flex; align-items: center; gap: 2px; }
+.memory-item.empty .value { color: var(--muted); }
+.memory-edit { grid-column: 1 / -1; display: grid; gap: 6px; }
+.memory-edit textarea { resize: vertical; min-height: 52px; border: 1px solid var(--line-strong); border-radius: var(--r-btn); padding: 8px 10px;
+  font: inherit; font-size: 14px; background: var(--surface); color: inherit; }
+.memory-edit textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px rgba(35, 64, 107, .10); }
+.memory-edit .row { display: flex; align-items: center; gap: 8px; }
+.memory-edit .count { margin-right: auto; }
+.memory-edit .primary { height: 32px; padding: 0 14px; font-size: 13px; }
+#memory-result .ok { margin: 0 0 6px; color: var(--ok); background: #E3F1E9; border-radius: 8px; padding: 8px 12px; font-size: 13.5px; }
 
 /* 일정표 카드 (R5-5): 머리 → 바뀐 점 → 일차 탭 + 타임라인 → 예산 카드 → 참고·출처 → 글로 보기 */
 .itin { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow-sm); overflow: hidden; }

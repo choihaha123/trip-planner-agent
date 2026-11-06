@@ -85,16 +85,16 @@
       <p id="link-empty" class="muted small" hidden>아직 저장한 링크가 없어요.</p>
     </aside>
 
-    <!-- 기억 패널: 장기 기억 보기 · 항목 삭제 (CLI /memory · /forget-memory와 같음) -->
+    <!-- 기억 패널: 장기 기억 보기 · 직접 추가·수정 · 항목 삭제 (CLI /memory · /remember · /forget-memory와 같음) -->
     <aside id="memory-panel" class="panel" aria-labelledby="memory-title" tabindex="-1" hidden>
       <header class="panel-head">
         <h3 id="memory-title">기억</h3>
         <button id="close-memory" class="icon-btn" type="button" aria-label="기억 닫기">×</button>
       </header>
-      <p class="muted small panel-sub">대화에서 직접 말해 주신 이름·여행 선호·답변 스타일을 기억해 모든 대화에서 씁니다. 지우면 더 이상 쓰지 않아요.</p>
+      <p class="muted small panel-sub">이름·여행 선호·답변 스타일을 기억해 모든 대화에서 씁니다. 대화에서 말하거나 '추가'·'수정'으로 직접 적을 수 있고, 지우면 더 이상 쓰지 않아요.</p>
       <div id="memory-result" aria-live="polite"></div>
       <ul id="memory-list" class="memory-list"></ul>
-      <p id="memory-empty" class="muted small" hidden>아직 기억한 정보가 없어요. 대화에서 "내 이름은 민수야, 매운 건 못 먹어"처럼 말하면 기억해 둘게요.</p>
+      <p id="memory-empty" class="muted small" hidden>아직 기억한 정보가 없어요. '추가'를 눌러 직접 적거나, 대화에서 "내 이름은 민수야, 매운 건 못 먹어"처럼 말하면 기억해 둘게요.</p>
     </aside>
   </div>
 

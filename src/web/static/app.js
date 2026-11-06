@@ -175,7 +175,7 @@ function showWelcome(keepThread = false) {
 // ---------- 오른쪽 패널(저장한 링크·기억): 한 번에 하나만 연다 ----------
 const PANELS = {
   links: { panel: "#links-panel", button: "#open-links", load: () => loadLinks(), focus: "#link-input" },
-  memory: { panel: "#memory-panel", button: "#open-memory", load: () => loadMemory(), focus: "#memory-panel" },  // 기억 패널은 입력칸이 없어 패널 자체에 포커스
+  memory: { panel: "#memory-panel", button: "#open-memory", load: () => loadMemory(), focus: "#memory-panel" },  // 입력칸은 '수정'·'추가'를 눌러야 열려 패널 자체에 포커스
 };
 
 function openPanel(name) {
@@ -292,26 +292,70 @@ async function loadMemory() {
 }
 
 function renderMemory(items) {
-  /** 기억 항목(표시 이름·값·삭제)을 설정 순서대로 그린다. */
+  /** 기억 항목을 설정 순서대로 그린다. 값이 있으면 값·수정·삭제, 없으면 '아직 없어요'·추가 (F1: 패널에서 직접 추가·수정). */
   const list = $("#memory-list");
   list.replaceChildren();
-  $("#memory-empty").hidden = items.length > 0;
+  $("#memory-empty").hidden = items.some((item) => item.value);
   for (const item of items) {
     const li = document.createElement("li");
-    li.className = "memory-item";
+    li.className = "memory-item" + (item.value ? "" : " empty");
     li.innerHTML = `<div class="info"><span class="label"></span><span class="value"></span></div>
-      <button class="del" type="button">×</button>`;
-    li.querySelector(".label").textContent = item.label;
-    li.querySelector(".value").textContent = item.value;
-    li.querySelector(".del").setAttribute("aria-label", `${item.label} 기억 삭제`);
-    li.querySelector(".del").addEventListener("click", () => askDeleteMemory(li, item));
+      <div class="actions"><button class="edit link small" type="button"></button></div>`;
+    li.querySelector(".label").textContent = item.label + (item.manual ? " · 직접 입력" : "");
+    li.querySelector(".value").textContent = item.value || "아직 없어요";
+    const edit = li.querySelector(".edit");
+    edit.textContent = item.value ? "수정" : "추가";
+    edit.setAttribute("aria-label", `${item.label} 기억 ${item.value ? "수정" : "추가"}`);
+    edit.addEventListener("click", () => editMemory(li, item));
+    if (item.value) {
+      const del = document.createElement("button");
+      del.className = "del";
+      del.type = "button";
+      del.textContent = "×";
+      del.setAttribute("aria-label", `${item.label} 기억 삭제`);
+      del.addEventListener("click", () => askDeleteMemory(li, item));
+      li.querySelector(".actions").appendChild(del);
+    }
     list.appendChild(li);
   }
+}
+
+function editMemory(li, item) {
+  /** 기억 항목을 그 자리에서 고치는 입력칸(글자 수 표시·저장·취소)을 연다. 저장은 PUT /api/memory/{항목}. */
+  if (li.querySelector(".memory-edit")) return;
+  li.querySelector(".confirm")?.remove();
+  const form = document.createElement("form");
+  form.className = "memory-edit";
+  form.innerHTML = `<textarea rows="2"></textarea>
+    <div class="row"><span class="count muted small"></span><button class="link small" type="button">취소</button><button class="primary" type="submit">저장</button></div>`;
+  const input = form.querySelector("textarea");
+  const count = form.querySelector(".count");
+  input.maxLength = item.max_chars;
+  input.value = item.value;
+  input.setAttribute("aria-label", `${item.label} 내용`);
+  const update = () => { count.textContent = `${input.value.length}/${item.max_chars}`; };
+  input.addEventListener("input", update);
+  update();
+  form.querySelector(".link").addEventListener("click", () => form.remove());
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const res = await api(`/api/memory/${encodeURIComponent(item.field)}`, { method: "PUT", body: JSON.stringify({ value: input.value }) });
+      renderMemory(res.memory);
+      $("#memory-result").innerHTML = `<p class="ok">${escapeHtml(item.label)} ${res.changed ? "기억을 저장했어요. 다음 답변부터 반영돼요." : "기억은 바뀐 내용이 없어요."}</p>`;
+    } catch (err) {
+      if (err.status === 401) return logout();
+      showMemoryError(err.detail);
+    }
+  });
+  li.appendChild(form);
+  input.focus();
 }
 
 function askDeleteMemory(li, item) {
   /** 기억 삭제 전 확인을 목록 안에서 받는다. */
   if (li.querySelector(".confirm")) return;
+  li.querySelector(".memory-edit")?.remove();
   const box = document.createElement("div");
   box.className = "confirm";
   box.innerHTML = `<span>이 기억을 지울까요? 앞으로 대화에서 쓰지 않아요.</span><button class="danger" type="button">삭제</button><button class="link small" type="button">취소</button>`;

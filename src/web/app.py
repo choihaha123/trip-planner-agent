@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from main import error_message
 from src import config
 from src.agent import AgentContext, build_agent, get_text, open_checkpointer, run_config
-from src.memory import delete_memory, get_memory
+from src.memory import MemoryInputError, delete_memory, get_memory_entries, save_manual_memory
 from src.middleware import SAVED_STATUSES, build_url_notice, extract_urls, process_urls, saved_references_this_turn
 from src.tools import itinerary_view
 from src.retriever import delete_user_source, list_user_pages
@@ -392,11 +392,33 @@ def delete_link(url: str, user: dict = Depends(current_user)) -> dict:
     return {"ok": True, "links": link_items(user["user_id"])}
 
 
-# ---------- 장기 기억 (SERVICE 2.10 기억 패널, CLI /memory·/forget-memory와 같음) ----------
+# ---------- 장기 기억 (SERVICE 2.10 기억 패널, CLI /memory·/forget-memory·/remember와 같음) ----------
 # 기억 저장소는 프로세스에서 연결 하나를 같이 쓰고(SqliteStore, 스레드 공유 허용) 에이전트도 같은 저장소에 쓰므로 잠금은 걸지 않는다.
 def memory_entries(user_id: str) -> list[dict]:
-    """화면용 기억 목록: field(항목 키), label(표시 이름), value. 순서는 설정 목록(MEMORY_FIELDS) 순서."""
-    return [{"field": k, "label": config.MEMORY_FIELDS[k], "value": v} for k, v in get_memory(user_id).items()]
+    """화면용 기억 목록: 설정 목록(MEMORY_FIELDS)의 모든 항목을 순서대로 field(항목 키)·label(표시 이름)·value·manual(직접 입력)로.
+    아직 없는 항목은 value가 빈 문자열이라 화면이 '추가' 칸으로 보여 준다(F1)."""
+    entries = get_memory_entries(user_id)
+    return [{"field": k, "label": label, "value": entries.get(k, {}).get("value", ""),
+             "manual": entries.get(k, {}).get("manual", False), "max_chars": config.MEMORY_VALUE_MAX_CHARS}
+            for k, label in config.MEMORY_FIELDS.items()]
+
+
+class MemoryIn(BaseModel):
+    """직접 입력하는 기억 값."""
+    value: str
+
+
+@app.put("/api/memory/{field}")
+def put_memory(field: str, body: MemoryIn, user: dict = Depends(current_user)) -> dict:
+    """내 기억 항목 하나를 직접 추가·수정한다(LLM을 거치지 않음, TASKS Phase 9 F1). 기억 항목이 아닌 이름이면 404,
+    빈 값·글자 수 초과·지시문 의심은 400(이유를 그대로 안내). 직접 입력 표시가 붙어 자동 추출이 문장을 바꿔 쓰지 않는다."""
+    if field not in config.MEMORY_FIELDS:
+        raise HTTPException(status_code=404, detail="기억 항목을 찾을 수 없습니다.")
+    try:
+        changed = save_manual_memory(user["user_id"], field, body.value)
+    except MemoryInputError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    return {"ok": True, "changed": changed, "memory": memory_entries(user["user_id"])}
 
 
 @app.get("/api/memory")
