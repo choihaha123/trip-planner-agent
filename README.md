@@ -112,6 +112,15 @@ uvicorn src.web.app:app       # 프로젝트 루트에서. 브라우저로 http:
   </tr>
 </table>
 
+**링크·기억 관리 예시**
+<table>
+  <tr>
+    <td width="33%"><img src="data/web_screenshot/6.png" alt="링크 저장과 삭제"><br><sub>링크 패널: 두 링크를 붙여넣어 저장(여행 글은 저장, 무관한 페이지는 이유와 함께 거절) → 삭제 확인</sub></td>
+    <td width="33%"><img src="data/web_screenshot/7.png" alt="기억 추가"><br><sub>기억 패널: '추가'로 여행 선호를 직접 입력(글자 수 표시)</sub></td>
+    <td width="33%"><img src="data/web_screenshot/8.png" alt="기억 저장과 삭제"><br><sub>저장 안내와 '직접 입력' 표시, 항목별 '수정'·삭제 확인</sub></td>
+  </tr>
+</table>
+
 **'이미지로 저장' 결과 예시**(모든 일차를 펼친 PNG): [교토 12월 초 단풍 5박6일 일정](data/web_screenshot/교토%2012월%20초%20단풍%205박6일%20일정.png) · [부산 1박2일 맛집 투어](data/web_screenshot/부산%201박2일%20맛집%20투어.png)
 
 ### 7-2) Claude Desktop에서 쓰기 (MCP 서버)
