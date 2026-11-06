@@ -67,6 +67,11 @@ WEB_AGENT_WAIT_SECONDS = 5     # 실행 자리를 기다리는 중 '대기 중' 
 WEB_MAX_CONCURRENT_RUNS = int(os.getenv("WEB_MAX_CONCURRENT_RUNS", "4"))  # 서버 전체 동시 답변 수 (Bedrock 한도 보호)
 WEB_DELETE_WAIT_SECONDS = 10   # 답변 중인 대화를 지울 때 실행이 멈추기를 기다리는 최대 시간(초)
 
+# ---------- MCP 서버 (SERVICE 2.11, SPEC 2.11) ----------
+MCP_SERVER_NAME = "trip-planner-agent"                 # MCP 클라이언트에 보이는 서버 이름
+MCP_USER_ID = os.getenv("MCP_USER_ID", "mcp_user")     # MCP로 쓸 때의 고정 user_id (저장 링크·기억 기준, 대화로 변경 불가)
+MCP_MESSAGE_MAX_CHARS = 4000                           # ask_trip_agent 메시지 최대 글자 수
+
 # ---------- RAG 저장소 (SPEC 1.4, 2.7) ----------
 EMBEDDING_MODEL_ID = os.getenv("EMBEDDING_MODEL_ID", "amazon.titan-embed-text-v2:0")
 CHROMA_DIR = PROJECT_ROOT / os.getenv("CHROMA_DIR", "storage/chroma")

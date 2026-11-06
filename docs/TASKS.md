@@ -34,7 +34,7 @@
 | 5-2 T5 | 재평가·문서 정리 (UX 평가 후속) | [x] | 2026-11-05 |
 | 5-2 T6 | 저장 자료 관리·출처 구분 표시 | [x] | 2026-11-05 |
 | 13 | (선택) 장기 기억 | [x] | 2026-11-05 |
-| 14 | (선택) MCP 서버 | [ ] | |
+| 14 | (선택) MCP 서버 | [x] | 2026-11-06 |
 | 15 | (선택) 웹페이지 | [x] | 2026-11-05 |
 | 7 R1 | 출처·예산 숫자 정합성 (종합 비평 후속) | [x] | 2026-11-05 |
 | 7 R2 | 링크 수집 보안·시간 제한 (종합 비평 후속) | [x] | 2026-11-05 |
@@ -299,9 +299,19 @@
 - **참조**: SPEC 1.5, 2.2, 2.5
 
 ### Step 14. (선택) MCP 서버
-- **내용**: 에이전트 코어를 MCP 서버로 감싸 외부 클라이언트에서 호출. user_id는 서버 설정·인자로 받고 대화 내용으로 바꿀 수 없게 유지(SERVICE 2.8)
+- **내용**: 에이전트 코어를 MCP 서버로 감싸 외부 클라이언트에서 호출. user_id는 서버 설정으로 고정하고 대화 내용으로 바꿀 수 없게 유지(SERVICE 2.8)
+  1. 문서·준비: SERVICE 2.11·SPEC 2.11·CLAUDE.md·OPEN_ISSUES 반영, `mcp` SDK 설치·requirements
+  2. 서버 구현 `src/mcp_server.py`: `ask_trip_agent`(대화 이어 쓰기·진행 알림) + 보조 계산 도구 4개, `mcp` 경로 안내 문구, 단위 테스트 `tests/test_mcp.py`
+  3. 실제 확인: stdio로 실제 서버를 띄워 실제 Bedrock 질문(출처·일정표·링크 저장·대화 이어 쓰기·남의 대화 거부)
+  4. README '7-2) Claude Desktop에서 쓰기'(준비물·설정 파일·사용법·비용)
+- **결과** — **완료 (2026-11-06)**
+  - 1: SERVICE 2.11·SPEC 2.11(라이브러리 `mcp` 2.3 `MCPServer`)·CLAUDE.md·OPEN_ISSUES·requirements(`mcp>=2.3,<3`)·`.env.example`(`MCP_USER_ID`) 반영.
+  - 2: `src/mcp_server.py` — `ask_trip_agent`(새 대화·대화 ID로 이어 쓰기·소유자 검사·진행 알림·원인별 오류 문구) + `calculate_trip_budget`·`convert_currency`·`resolve_trip_dates`·`get_weather_forecast`, 서버 안내문. `mcp` 경로의 저장 링크·기억 관리 안내(`SAVED_LINKS_GUIDE`·`MEMORY_GUIDE`·`MEMORY_VIEW_HINTS`). 단위 테스트 6건(`tests/test_mcp.py`, `mcp.Client` 같은 프로세스 연결) → 전체 189건 통과.
+  - 3: Claude Desktop처럼 실제 서버를 stdio 자식 프로세스로 다른 폴더(`C:\`)에서 띄워 실제 Bedrock 확인(임시 사용자 `mcp_check`, 끝나고 정리): 도구 5개 노출, 간사이공항→난바 27초(출처·'출처 없음'), 대화 ID로 이어 묻기(도톤보리) 문맥 유지, 링크만 보내 저장('※ 링크 처리 결과'), 저장 목록 요청엔 MCP 안내대로 CLI·웹 안내, 오사카 1박2일 일정표 111초·진행 알림 8단계·일정표 형식 그대로, 없는 대화 ID 거부, 환율 보조 도구 출처 포함. 표준 출력 오염 없음.
+  - 4: README에 기능 소개·'7-2) Claude Desktop에서 쓰기'(준비물·설정 파일 예시·도구·사용 예·알아 둘 점)·구조·테스트 수 반영.
+  - 남은 것: 실제 Claude Desktop 앱에서의 연결은 사용자 PC에서 확인한다(앱의 도구 대기 한도가 일정표 1~2분보다 짧으면 진행 알림만으로 부족할 수 있음).
 - **완료 확인**: MCP 클라이언트에서 질문하면 CLI와 같은 답(출처·도구 사용)을 받는다.
-- **정할 것**: MCP 라이브러리(후보: `ref/mcp_server.py`의 fastmcp — 신규 라이브러리 승인 필요), 노출할 도구 범위(대화 전체 / 개별 도구), 실행 방식, 파일 위치
+- **정할 것**: ~~MCP 라이브러리, 노출할 도구 범위, 실행 방식, 파일 위치~~ → 결정됨(2026-11-06): 공식 `mcp` SDK 2.3(신규 승인), 노출은 혼합(에이전트 통째로 `ask_trip_agent` + 보조 계산 도구), 로컬 stdio, 파일 `src/mcp_server.py`·`tests/test_mcp.py`(신규 승인), 사용자 ID는 `MCP_USER_ID`(기본 `mcp_user`, CLI와 따로)
 - **참조**: SERVICE 1.3 ② · SPEC 1.3 · `ref/mcp_server.py`
 
 ### Step 15. (선택) 웹페이지

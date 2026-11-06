@@ -1,6 +1,6 @@
 # trip-planner-agent — 여행 계획·조언 에이전트
 
-LangChain·LangGraph와 Amazon Bedrock(Claude)으로 만든 여행 에이전트입니다. CLI와 웹 화면(회원가입·로그인)에서 같은 에이전트를 씁니다. 일정표·예산·날씨·환율·여행 Q&A를 출처와 함께 답하고, 사용자가 넣은 여행 글 URL을 판정해 사용자별로 저장해 두었다가 이후 대화에서도 근거로 씁니다.
+LangChain·LangGraph와 Amazon Bedrock(Claude)으로 만든 여행 에이전트입니다. CLI, 웹 화면(회원가입·로그인), MCP 서버(Claude Desktop 등)에서 같은 에이전트를 씁니다. 일정표·예산·날씨·환율·여행 Q&A를 출처와 함께 답하고, 사용자가 넣은 여행 글 URL을 판정해 사용자별로 저장해 두었다가 이후 대화에서도 근거로 씁니다.
 
 ### 주요 기능
 - **일정표**: 빠진 정보(기간·인원·출발지·예산)와 취향(꼭 갈 곳·여행 스타일·관심사)을 한 번에 되묻고(이미 말한 것은 다시 묻지 않음), 일자별 장소·이동수단·출처·일차별 비용·예산 판정이 들어간 일정표를 프로그램이 정해진 형식으로 보여줍니다. 식사 장소에 가게 이름이 없거나 공항을 정하지 않는 등 막연한 일정은 프로그램이 한 번 돌려보내 구체적으로 고치게 합니다. 일정을 고치면 맨 위에 **바뀐 점**(교체·추가·빠짐·예산 변화)을 붙이고, 바꾸지 않은 항목의 출처·📌는 그대로 둡니다.
@@ -10,6 +10,7 @@ LangChain·LangGraph와 Amazon Bedrock(Claude)으로 만든 여행 에이전트�
 - **URL 참고**: 메시지 속 URL(최대 5개)을 동시에 수집(한 링크당 최대 15초·3MB, 내부망·로컬 주소는 열지 않음) → 여행 관련도·지시문 판정 → 통과한 글만 사용자별로 저장합니다. 답변 끝 '※ 링크 처리 결과'에 저장한 링크(✔)와 못 쓴 링크(✖, 이유와 다음 행동)를 알려 줍니다. 링크만 보내면 바로 저장 결과만 답합니다. 답변 출처 중 내가 저장한 글에는 `📌 내가 저장한 자료 (저장일)`이 붙고, 저장한 링크는 `/saved`로 보고 `/forget <번호>`로 지웁니다.
 - **장기 기억**: 대화에서 직접 말한 이름·여행 선호·답변 스타일을 사용자별로 기억해 새 대화에서도 반영합니다. 기억하면 답변 끝에 `※ 기억했어요: …`로 알립니다.
 - **웹 화면**: 계정마다 대화 여러 개(제목 자동, 이어 쓰기·삭제), 답변 글자 스트리밍과 진행 단계 표시, 저장한 링크 패널(추가·목록·삭제), 기억 패널(보기·삭제)을 제공합니다. 일정표는 **카드**(일차 탭·타임라인·예산 카드)로 보여 주고 **이미지(PNG)로 저장**할 수 있습니다. 답변은 대화마다 따로 만들어 서로 기다리지 않고, **중지** 버튼으로 멈출 수 있으며, 새로고침해도 답변은 끝까지 만들어져 다시 열면 이어 봅니다.
+- **MCP 서버**: Claude Desktop 같은 MCP 클라이언트에 연결해, 채팅창에서 이 에이전트(일정표·출처·링크 저장·장기 기억)와 예산·환율·날짜·날씨 계산 도구를 씁니다. 각자 자기 PC에서 실행하며 비용은 자기 `.env`의 AWS 계정에서 나갑니다(아래 7-2).
 - **안전장치**: 여행 무관 요청 거절, 시스템 프롬프트 비공개, 사용자별 자료·대화 격리, 링크·웹 검색 결과 속 숨은 지시문(간접 프롬프트 인젝션: 제목·우회 표현·전각/폭 0 문자 포함) 차단, 가짜 출처 태그 무력화, 검색되지 않은 URL은 출처로 인정하지 않음, 출처 없는 가격에 '(출처 없음, 사용자 확인 필요)' 표시.
 
 ## 실행 방법 (Windows PowerShell, 프로젝트 루트에서)
@@ -99,6 +100,55 @@ uvicorn src.web.app:app       # 프로젝트 루트에서. 브라우저로 http:
 - 위쪽 **기억** 버튼: 기억한 이름·여행 선호·답변 스타일을 보고 항목별로 지웁니다.
 - 대화 기록·저장한 링크·기억은 CLI와 같은 저장소를 쓰지만, 웹 계정의 사용자 ID는 내부 ID(`u_…`)라 CLI의 `--user` 이름과는 따로입니다. 설정값(`WEB_DB`, `WEB_SESSION_DAYS`, HTTPS 배포 시 `WEB_COOKIE_SECURE=true` 등)은 `.env.example`을 참고합니다.
 
+### 7-2) Claude Desktop에서 쓰기 (MCP 서버)
+이 에이전트를 **MCP 서버**로 띄워 Claude Desktop 같은 MCP 클라이언트에서 쓸 수 있습니다. 서버는 **각자 자기 PC에서** 실행합니다(Claude Desktop이 자식 프로세스로 띄우는 stdio 방식).
+
+**준비물**
+| 준비물 | 설명 |
+|---|---|
+| 이 저장소와 파이썬 환경 | 위 0) 준비를 마친 상태(`pip install -r requirements.txt`에 `mcp` SDK 포함, 기본 KB 적재까지) |
+| **자기 AWS 계정과 액세스 키** | `.env`에 넣습니다. 답변은 Amazon Bedrock으로 만들어지고 **비용은 이 AWS 계정에서 나갑니다**(저장소에는 키가 없으므로 다른 사람의 키가 쓰이지 않습니다) |
+| **Bedrock 모델 사용 권한** | AWS 콘솔 Bedrock에서 Claude Sonnet 4.5·Claude Haiku 4.5·Titan Text Embeddings V2 사용을 허용해 둡니다(키만 있고 권한이 없으면 호출이 거부됩니다) |
+| Tavily API 키 | 웹 검색용, `.env`의 `TAVILY_API_KEY`(무료 키 가능) |
+| Claude Desktop | 대화하는 쪽. 각자의 Claude.ai 요금제로 쓰며 **Anthropic API 키나 API 결제는 필요 없습니다** |
+
+**연결 방법**
+1. Claude Desktop → 설정 → 개발자(Developer) → 설정 편집(Edit Config)으로 `claude_desktop_config.json`을 엽니다.
+   - Windows: `%APPDATA%\Claude\claude_desktop_config.json` · macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+2. `mcpServers`에 아래를 넣습니다. 경로는 **이 저장소를 받은 위치의 절대 경로**로 바꿉니다(Windows는 `\`를 `\\`로).
+   ```json
+   {
+     "mcpServers": {
+       "trip-planner-agent": {
+         "command": "C:\\path\\to\\trip-planner-agent\\.venv\\Scripts\\python.exe",
+         "args": ["C:\\path\\to\\trip-planner-agent\\src\\mcp_server.py"]
+       }
+     }
+   }
+   ```
+   macOS·Linux는 `"command": "/path/to/trip-planner-agent/.venv/bin/python"`, `"args": ["/path/to/trip-planner-agent/src/mcp_server.py"]`.
+   - 설정 파일은 JSON이라 전체가 `{ }` **하나**여야 합니다. 이미 내용이 있으면 맨 아래에 붙이지 말고, 기존 맨 바깥 `{ }` 안에 `"mcpServers": {…}` 항목을 추가합니다(앞 항목 끝에 쉼표). `"mcpServers"`가 이미 있으면 그 안에 `"trip-planner-agent": {…}`만 추가합니다.
+   - 설정 파일에는 **실행 방법만** 적습니다. API 키는 넣지 않습니다. 서버가 켜질 때 **이 저장소 폴더의 `.env`를 절대 경로로 읽어** 키를 씁니다(Claude Desktop은 키를 보지 않음).
+3. Claude Desktop을 트레이 아이콘에서 **완전히 종료(Quit)**했다가 다시 켭니다(창만 닫으면 설정을 다시 읽지 않습니다).
+4. 연결 확인: 도구 메뉴 위치는 버전마다 다르므로(입력창 아래 `+`·"검색 및 도구" 메뉴, 예전 버전은 🔨 아이콘), **설정 → 개발자(Developer)** 화면에서 `trip-planner-agent`가 **running**인지 보는 것이 가장 확실합니다. failed면 같은 화면에 오류가 보입니다. 채팅에서 처음 도구를 부를 때 사용 허락을 물으면 허용합니다.
+5. 설정은 **PC마다 따로**입니다. 다른 PC에서 같은 Claude 계정으로 써도 MCP 서버는 따라가지 않으므로, 그 PC에도 저장소·`.env`·설정 파일을 같은 방법으로 준비해야 합니다.
+
+**쓸 수 있는 도구**
+| 도구 | 하는 일 |
+|---|---|
+| `ask_trip_agent` | 질문을 이 에이전트에 그대로 넘겨 **CLI와 같은 답**(출처, 일정표 형식, '출처 없음' 표시, 링크 저장·처리 결과, 장기 기억)을 받습니다. 답 끝의 **대화 ID**를 넘기면 같은 대화를 이어 갑니다. 일정표처럼 오래 걸리는 답은 진행 단계를 알려 줍니다 |
+| `calculate_trip_budget` · `convert_currency` · `resolve_trip_dates` · `get_weather_forecast` | 예산 계산·환율 환산·날짜 계산·날씨 예보만 빠르게 하는 보조 도구(파이썬 계산, Bedrock 비용 없음) |
+
+**사용 예** (Claude Desktop 채팅창에서)
+- `여행 에이전트로 간사이 공항에서 난바까지 가는 법 알려줘` → 출처가 붙은 답과 대화 ID → `거기서 도톤보리까지는?`(같은 대화로 이어짐)
+- `오사카 1박2일 일정 짜줘. 혼자, 인천 출발, 예산 50만원, 다음 주 토요일 출발` → 1~2분 뒤 일정표(진행 단계 표시)
+- `https://www.gotokyo.org/kr/spot/1749/index.html 저장해줘` → 판정 후 저장, 이후 질문에서 근거로 사용
+
+**알아 둘 점**
+- 사용자 ID는 `.env`의 `MCP_USER_ID`(기본 `mcp_user`)로 고정되고 대화로 바꿀 수 없습니다. CLI·웹과 저장 링크·기억이 따로이며, CLI 사용자와 함께 쓰려면 `MCP_USER_ID=alice`처럼 그 이름을 넣습니다.
+- 저장한 링크·기억의 목록 보기·삭제는 MCP에서 하지 않고 CLI(`/saved`·`/memory`)나 웹 화면에서 합니다.
+- 연결이 안 되면: 경로(특히 `\\`)와 venv 파이썬 경로를 확인하고, `logs/app.jsonl`의 `mcp_start`·`mcp_agent_error`를 봅니다. 서버를 직접 실행해 오류를 볼 수도 있습니다: `.venv\Scripts\python.exe src\mcp_server.py`(오류가 없으면 입력을 기다리며 멈춰 있는 것이 정상, Ctrl+C로 종료).
+
 ### 로그 보기
 ```powershell
 Get-Content logs\app.jsonl -Tail 20          # 운영 이벤트 (URL 판정·거절, 실패, 대체 모델 전환 등)
@@ -113,7 +163,7 @@ Get-Content logs\trace.jsonl -Wait -Tail 0   # 실행 추적 (질문마다 LLM·
 
 ## 테스트와 평가
 ```powershell
-python -m unittest discover tests          # 단위 테스트 183개 (예산·날짜, 장기 기억, 장애 내성·링크 안내·수집 보안·인젝션, 일정표 검사·바뀐 점, 웹 API·동시 실행) — Bedrock 호출 없음
+python -m unittest discover tests          # 단위 테스트 189개 (예산·날짜, 장기 기억, 장애 내성·링크 안내·수집 보안·인젝션, 일정표 검사·바뀐 점, 웹 API·동시 실행, MCP 서버) — Bedrock 호출 없음
 python -m evaluation.run_eval              # 평가 20건 전체 실행 (약 7~13분, 합격 여부 판정)
 python -m evaluation.run_eval --ids 1,17   # 일부만 실행 (합격 여부는 판정하지 않음)
 ```
@@ -141,6 +191,7 @@ src/web/auth.py              회원가입·로그인·세션 (비밀번호 scryp
 src/web/threads.py           사용자별 대화 목록 (제목·최근 순·삭제)
 src/web/runs.py              대화별 백그라운드 답변 실행 (이벤트 쌓기·다시 구독·중지·동시 실행 상한)
 src/web/static/              화면 (index.html, app.js, style.css — 빌드 도구 없음. CDN: Pretendard 글꼴, 이미지 저장용 html2canvas)
+src/mcp_server.py            MCP 서버 (Claude Desktop 등, stdio): ask_trip_agent + 예산·환율·날짜·날씨 보조 도구
 data/kb/                     기본 KB 원본 문서 (오사카·도쿄·교토 공식 관광 자료, 출처 머리말 포함)
 evaluation/                  평가 데이터·스크립트·인젝션 테스트 페이지·결과·리포트
 tests/                       단위 테스트
@@ -167,11 +218,12 @@ docs/                        기획서·구현 명세·평가 기준·시나리�
 - 웹 검색: Tavily / 날씨: Open-Meteo / 환율: open.er-api.com (모두 출처 표시)
 - 웹 화면: FastAPI + uvicorn, 글꼴 Pretendard(CDN), 일정표 이미지 저장 html2canvas 1.4.1(CDN)
 - 웹페이지 수집: requests + BeautifulSoup (주소 검사·시간·크기 제한을 직접 처리)
+- MCP 서버: 공식 `mcp` Python SDK 2.3 (`MCPServer`, stdio)
 
 ## 알려진 한계
 - 평가를 세 번 돌리면 실패 케이스가 매번 달랐습니다(85%·95%·85%). 날씨 출처를 빠뜨리거나, 공식 KB 대신 웹 출처를 인용하거나, 저장한 글을 검색하지 않고 답하는 경우가 가끔 있습니다(`evaluation/round2_report.md` 5.2절).
 - 일정표는 구체성 검사 재시도까지 포함해 1~2분 걸릴 수 있습니다.
-- 2차 점검에서 나온 지적(상대 날짜 계산 오류 가능성, 비용 상한, DNS 리바인딩 등 보안, 로그 관리 등)은 `docs/TASKS.md` Phase 8에 정리돼 있으며 아직 반영하지 않았습니다. CLI와 웹은 로컬 실행(127.0.0.1)을 전제로 합니다.
+- 2차 점검에서 나온 지적(상대 날짜 계산 오류 가능성, 비용 상한, DNS 리바인딩 등 보안, 로그 관리 등)은 `docs/TASKS.md` Phase 8에 정리돼 있으며 아직 반영하지 않았습니다. CLI·웹·MCP 서버는 모두 로컬 실행(자기 PC, 웹은 127.0.0.1)을 전제로 합니다.
 
 ## 문서
 - [`CLAUDE.md`](CLAUDE.md): Claude Code 작업 규칙

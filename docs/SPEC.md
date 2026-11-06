@@ -25,6 +25,7 @@ src/collector.py   웹페이지 수집 (페이지 가져오기, 텍스트·제�
 src/tools.py       도메인 도구 (예산 계산 `calculate_budget`, 날짜 계산 `resolve_dates`, 날씨, 환율, 웹 검색, RAG 검색 등)
 src/retriever.py   RAG 파이프라인 (기본 KB + user_id별 저장소, 청킹·임베딩·저장·검색·해시 비교·초기화)
 src/preprocess/build_kb.py  기본 KB 적재 스크립트 (data/kb/*.md → 기본 KB 컬렉션. CLI와 별개로 설치 후 한 번 실행)
+src/mcp_server.py  MCP 서버 진입점 (Claude Desktop 등 MCP 클라이언트용, stdio. 에이전트 코어를 감싼 ask_trip_agent + 보조 계산 도구, 2.11)
 data/              기본 KB 문서와 데이터
 evaluation/        test_queries.csv 와 평가 리포트
 ```
@@ -32,7 +33,7 @@ evaluation/        test_queries.csv 와 평가 리포트
 ### 1.3 실행 구조
 ```
 [CLI 대화 루프: main.py]  --user <user_id>, thread_id로 대화 구분
-      │  (향후 ② MCP 서버, ③ 웹 백엔드가 같은 자리에서 호출)
+      │  (② MCP 서버 src/mcp_server.py, ③ 웹 백엔드 src/web/app.py가 같은 자리에서 호출)
       ▼
 [에이전트 코어: create_agent]
   ├─ 미들웨어(전처리): URL 추출 → 수집 → LLM 점수 + 파이썬 임계값 → user_id 공간 저장
@@ -116,7 +117,7 @@ evaluation/        test_queries.csv 와 평가 리포트
 - 임베딩 모델: Bedrock Titan V2 (`langchain-aws`의 `BedrockEmbeddings`) — 결정됨, 새 라이브러리 없음
 - 웹 프레임워크: FastAPI + uvicorn — 결정됨, 도입 승인됨(OPEN_ISSUES #9)
 - 일정표 이미지 저장(웹 화면): `html2canvas` 1.4.1 — 결정됨, 도입 승인됨(2026-11-06, TASKS Phase 7 R5-6). 브라우저 라이브러리라 requirements.txt가 아니라 `index.html`에서 jsDelivr CDN으로 불러온다(Pretendard 글꼴과 같은 방식)
-- (향후) MCP SDK
+- MCP 서버: 공식 `mcp` Python SDK 2.3 (`mcp.server.mcpserver.MCPServer`, 1.x의 FastMCP가 2.x에서 이름이 바뀐 것) — 결정됨, 도입 승인됨(2026-11-06, TASKS Step 14)
 
 ---
 
@@ -430,3 +431,16 @@ evaluation/        test_queries.csv 와 평가 리포트
   - 확인: 실제 Bedrock 데이터(링크 저장 → 도쿄 맛집 일정 → 수정)로 데스크톱·390px 캡처. 390px는 `--force-prefers-reduced-motion`으로 찍어 iframe 애니메이션 정지 문제를 피했다.
 - **일정표 이미지 저장** (2026-11-06 Phase 7 R5-6, 사용자 결정: PDF·CSV 대신 이미지, `html2canvas` 1.4.1 도입 승인): 카드 머리의 '이미지로 저장' 버튼(`saveItineraryImage`). `html2canvas`는 처음 누를 때만 jsDelivr CDN에서 불러온다(`loadHtml2canvas`, 약 199KB, 실패하면 다음에 다시 시도). 카드를 복제해 화면 밖(`.itin-export-holder`, 폭 720px)에 두고 `.export` 모양으로 바꾼다: 모든 일차를 펼치고 일차 제목(`.itin-day-title`)을 보이며, 탭·버튼·글로 보기·출처 목록은 숨기고, 맨 아래 '여행 플래너에서 만든 일정 · 금액은 대략치…' 문구를 붙인다. 2배 해상도(`scale: 2`)로 찍어 `일정 제목.png`로 내려받는다(파일 이름에 못 쓰는 글자는 공백으로). 실패하면 채팅에 안내. 실측: 도쿄 2박3일 수정본 1440×6712, 약 1.2MB, 📌·바뀐 항목·예산 카드 포함.
 - 테스트: `tests/test_web.py` (FastAPI `TestClient`, 임시 DB, 대화 API는 가짜 모델로 만든 실제 에이전트 그래프, 링크 API는 user_id별 메모리 저장소로, 기억 API는 임시(:memory:) 기억 저장소로 바꿔 끼움)
+
+### 2.11 MCP 서버 (TASKS Step 14, SERVICE 2.11)
+- **구성**: 공식 `mcp` SDK 2.3의 `MCPServer`(1.x FastMCP의 새 이름), 파일 `src/mcp_server.py`, 전송은 **stdio**(클라이언트가 자식 프로세스로 띄움). 실행: `python src/mcp_server.py`(또는 프로젝트 루트에서 `python -m src.mcp_server`). 파일로 직접 실행해도 `src` 패키지를 찾도록 프로젝트 루트를 `sys.path`에 넣는다. `.env`·로그·저장소 경로는 `config.PROJECT_ROOT` 기준 절대 경로라 클라이언트가 어느 폴더에서 띄워도 같다.
+- **stdio 주의**: 표준 출력은 MCP 메시지 전용이다. 로그는 `config.setup_logging`의 파일 핸들러(`logs/`)로만 남기고 `print`를 쓰지 않는다.
+- **에이전트·사용자**: 에이전트는 프로세스에 하나(`build_agent` + CLI·웹과 같은 체크포인터 `storage/checkpoints.sqlite`). 사용자 ID는 `config.MCP_USER_ID`(`.env`의 `MCP_USER_ID`, 기본 `mcp_user`)로 고정하고 시작할 때 `validate_user_id`로 검사한다. 도구 인자로 사용자를 바꿀 수 없다. 호출 경로는 `AgentContext(channel="mcp")`.
+- **도구**
+  - `ask_trip_agent(message, conversation_id="")`: 우리 에이전트에 질문을 넘겨 최종 답(턴 끝 처리 반영: 링크 처리 결과·📌·가격 출처·기억 알림, 일정표면 렌더링된 글)을 돌려준다. `conversation_id`가 비면 `new_thread_id`로 새 대화, 있으면 `check_thread_access`로 소유자(MCP_USER_ID)를 검사한다(남의·없는 대화는 같은 문구로 거부). 답 끝에 '대화 ID: …(이어서 물으려면 conversation_id에 넣기)'를 붙인다. 메시지는 앞뒤 공백을 지우고 비었거나 `MCP_MESSAGE_MAX_CHARS`(4000)자를 넘으면 거부한다. 에이전트는 `agent.stream(stream_mode="updates")`를 작업 스레드(`asyncio.to_thread`)에서 돌리고, 도구 호출 단계(웹과 같은 `TOOL_STAGES`)마다 `Context.report_progress`로 진행 알림을 보내 일정표처럼 긴 답에도 클라이언트가 진행 상황을 받는다. 실패하면 원인별 문구(한도 초과면 '잠시 후', 그 밖엔 '다시 보내거나 conversation_id 없이 새 대화로')를 돌려주고 `mcp_agent_error` 로그를 남긴다.
+  - 보조 계산 도구(Bedrock을 쓰지 않음, CLI와 같은 파이썬 함수): `calculate_trip_budget`(`compute_budget` + `render_budget`, 비용 근거는 사용자 입력·LLM 추정치만. 검색 출처 ID를 풀 대화 상태가 없어 '출처' 근거는 추정치로 내린다), `convert_currency`(`get_exchange_rate`), `resolve_trip_dates`(`resolve_dates`), `get_weather_forecast`(`get_weather`).
+  - 서버 안내문(`instructions`): 여행 계획·질문·링크 저장은 `ask_trip_agent`를 쓰고 답(출처·일정표 형식)을 바꾸지 말고 보여 줄 것, 같은 여행을 이어 물을 때는 받은 conversation_id를 넘길 것, 간단한 계산만 보조 도구를 쓸 것.
+- **저장 링크·기억 관리 안내**: 시스템 프롬프트의 안내 줄(`SAVED_LINKS_GUIDE`·`MEMORY_GUIDE`)과 기억 알림 끝(`MEMORY_VIEW_HINTS`)에 `mcp` 경로를 추가한다(목록 보기·삭제는 MCP에서 지원하지 않으며 CLI `/saved`·`/memory` 또는 웹을 안내).
+- **Claude Desktop 연결**: `claude_desktop_config.json`의 `mcpServers`에 `command`=venv 파이썬 절대 경로, `args`=[`src/mcp_server.py` 절대 경로]를 넣는다(README '7-2) Claude Desktop에서 쓰기').
+- **테스트**: `tests/test_mcp.py` — `mcp.Client(서버 인스턴스)`로 같은 프로세스에서 연결해, 도구 목록, 보조 계산 도구 결과, `ask_trip_agent`(가짜 모델 에이전트)의 새 대화·이어 쓰기·사용자 고정·남의 대화 거부·빈 메시지 거부를 검증한다.
+- **실측**(2026-11-06, 실제 서버를 stdio 자식 프로세스로 다른 폴더에서 실행, 실제 Bedrock): 일반 질문 27초(출처 포함), 대화 ID로 이어 묻기 9.6초(문맥 유지), 링크만 보낸 메시지 5초('링크 처리 결과'), 오사카 1박2일 일정표 111초 동안 진행 알림 8단계, 없는 대화 ID 즉시 거부. 표준 출력 오염 없음.

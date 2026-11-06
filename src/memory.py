@@ -183,7 +183,7 @@ _MEMORY_NOTICE_LINE = re.compile(r"\n*^[ \t*]*" + re.escape(MEMORY_NOTICE_PREFIX
 
 
 # 기억 알림 끝의 '보는 방법' 안내. 호출 경로(AgentContext.channel)마다 관리 화면이 다르다. (SERVICE 2.9, 2.10)
-MEMORY_VIEW_HINTS = {"cli": "(보기: /memory)", "web": "(보기: 위쪽 '기억' 버튼)"}
+MEMORY_VIEW_HINTS = {"cli": "(보기: /memory)", "web": "(보기: 위쪽 '기억' 버튼)", "mcp": "(보기: 이 에이전트의 CLI /memory 또는 웹 화면)"}
 
 
 def build_memory_notice(saved: dict[str, str], channel: str = "cli") -> str:
