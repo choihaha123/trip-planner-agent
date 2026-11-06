@@ -112,6 +112,8 @@ uvicorn src.web.app:app       # 프로젝트 루트에서. 브라우저로 http:
   </tr>
 </table>
 
+**'이미지로 저장' 결과 예시**(모든 일차를 펼친 PNG): [교토 12월 초 단풍 5박6일 일정](data/web_screenshot/교토%2012월%20초%20단풍%205박6일%20일정.png) · [부산 1박2일 맛집 투어](data/web_screenshot/부산%201박2일%20맛집%20투어.png)
+
 ### 7-2) Claude Desktop에서 쓰기 (MCP 서버)
 이 에이전트를 **MCP 서버**로 띄워 Claude Desktop 같은 MCP 클라이언트에서 쓸 수 있습니다. 서버는 **각자 자기 PC에서** 실행합니다(Claude Desktop이 자식 프로세스로 띄우는 stdio 방식).
 
