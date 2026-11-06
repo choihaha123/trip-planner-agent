@@ -17,10 +17,11 @@ from mcp.server.mcpserver import Context, MCPServer  # noqa: E402
 
 from src import config  # noqa: E402
 from src.agent import (AgentContext, ThreadAccessError, build_agent, check_thread_access, get_text,  # noqa: E402
-                       is_throttled, new_thread_id, open_checkpointer, run_config, validate_user_id)
+                       new_thread_id, open_checkpointer, run_config, validate_user_id)
 from src.tools import (BudgetError, BudgetItem, ExchangeRateError, compute_budget, get_exchange_rate,  # noqa: E402
                        get_weather, render_budget, resolve_dates)
 from src.web.app import progress_stages  # noqa: E402  (웹과 같은 진행 단계 문구)
+from main import error_message  # noqa: E402  (채널별 오류 안내)
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +56,8 @@ def conversation_footer(thread_id: str) -> str:
 
 
 def agent_error_message(error: Exception) -> str:
-    """에이전트 실패를 원인별로 안내한다(CLI의 /new 대신 MCP에 맞는 다음 행동)."""
-    if is_throttled(error):
-        return "지금 요청이 많아 답변하지 못했습니다. 잠시 후 같은 질문을 다시 보내 주세요."
-    return "답변 중 오류가 발생했습니다. 같은 질문을 다시 보내 보시고, 계속 안 되면 conversation_id 없이 새 대화로 물어봐 주세요."
+    """에이전트 실패를 원인별로 안내한다(CLI의 /new 대신 MCP에 맞는 다음 행동). 문구는 CLI·웹과 같은 함수에서 고른다."""
+    return error_message(error, "mcp")
 
 
 @server.tool()

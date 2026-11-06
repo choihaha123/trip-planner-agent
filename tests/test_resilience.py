@@ -10,9 +10,12 @@ from unittest.mock import patch
 
 from botocore.exceptions import ClientError
 from langchain.agents import create_agent
+from langchain_core.language_models import BaseChatModel
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langchain_core.tools import tool
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.tools import ToolException, tool
+from pydantic import Field
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphInterrupt
 
@@ -1004,6 +1007,51 @@ class TestAlignBudgetDays(unittest.TestCase):
         self.assertEqual([i.day for i in tools.align_budget_days(items, self.days)], [1, 2, None])
 
 
+class TestKrwConversionFix(unittest.TestCase):
+    """일반 답변의 원화 환산은 실제 환율로 다시 계산한 값으로 맞춘다. (TASKS Phase 8 S1-3)"""
+
+    @staticmethod
+    def rate(from_currency, to_currency):
+        """고정 환율: 1 JPY = 9 KRW, 1 USD = 1,400 KRW."""
+        return {"JPY": 9.0, "USD": 1400.0}[from_currency], 0
+
+    def test_same_price_converted_once(self):
+        """USJ 사례: 같은 8,600엔이 54,800원·72,300원으로 따로 나와도 실제 환율 한 값(77,400원)으로 맞춘다. 범위는 양 끝을 계산한다."""
+        text, fixed, confirmed = tools.fix_krw_conversions(
+            "USJ 입장권은 8,600~10,400엔(약 54,800~87,000원)이고 1데이 패스 8,600엔(약 72,300원)", self.rate)
+        self.assertEqual(text, "USJ 입장권은 8,600~10,400엔(약 77,400~93,600원)이고 1데이 패스 8,600엔(약 77,400원)")
+        self.assertEqual(len(fixed), 2)
+        self.assertIn("77,400원", confirmed)
+
+    def test_close_enough_or_not_conversion(self):
+        """오차(3%) 안의 환산·원화끼리·'≈'·'은 약' 표기는 그대로 두고 확인된 금액으로만 센다."""
+        for text in ("난바까지 970엔(약 8,700원)", "¥1,200 ≈ 11,000원", "1,000엔은 약 9,000원", "택시 15,000원(약 1,600엔)"):
+            self.assertEqual(tools.fix_krw_conversions(text, self.rate)[:2], (text, []), text)
+
+    def test_separate_krw_lines_confirmed(self):
+        """원화를 외화 옆이 아니라 따로 썼어도, 답변 속 외화 금액의 환산값과 맞으면 확인된 금액(출처 없음 표시 안 함)이다.
+        어느 외화와도 맞지 않는 원화 금액은 확인하지 않는다(실측: Bedrock 답변이 엔화·원화를 다른 단락에 씀)."""
+        text = "성인: 7,819엔 ~ 9,455엔\n원화로는 성인 약 70,400원 ~ 85,100원, 여행사 구매 시 95,000원"
+        confirmed = tools.fix_krw_conversions(text, self.rate)[2]
+        self.assertIn("70,400원 ~ 85,100원", confirmed)
+        self.assertNotIn("95,000원", confirmed.replace("70,400원 ~ 85,100원", ""))
+
+    def test_rate_failure_keeps_text(self):
+        """환율 조회에 실패하면 고치지 않는다."""
+        def broken(*_):
+            raise tools.ExchangeRateError("down")
+        self.assertEqual(tools.fix_krw_conversions("8,600엔(약 54,800원)", broken)[:2], ("8,600엔(약 54,800원)", []))
+
+    def test_answer_hook_fixes_and_does_not_label_converted(self):
+        """답변 후처리: 환산을 고치고, 환율로 확인된 원화 금액에는 '출처 없음'을 붙이지 않는다(외화 가격은 원래 규칙대로)."""
+        from src.agent import label_prices_in_answer
+        state = {"messages": [HumanMessage("USJ 입장권 얼마야?"), AIMessage("입장권 8,600엔(약 72,300원)이에요.", id="a1")]}
+        with patch.object(tools, "get_rate", side_effect=self.rate):
+            update = label_prices_in_answer.after_model(state, None)
+        self.assertEqual(update["messages"][0].content,
+                         f"입장권 8,600엔 ({config.NO_SOURCE_LABEL})(약 77,400원)이에요.")
+
+
 class TestAnswerPriceSources(unittest.TestCase):
     """일반 답변의 가격 근거 표시: 통화가 붙은 금액끼리 대조, 범위는 양 끝, URL이 있어도 가격마다 판정. (R1-3)"""
     RAPIT = tools.wrap_reference(1, "라피트 요금", "https://nankai.example/rapit",
@@ -1067,6 +1115,114 @@ class TestItineraryRequestDetection(unittest.TestCase):
                      "이 블로그 참고해서 센소지 중심으로 아사쿠사 반나절 코스 추천해줘", "나는 오사카 여행을 계획 중이야",
                      "다음 주 토요일 오사카 날씨 어때?"):
             self.assertIsNone(ITINERARY_REQUEST.search(text), text)
+
+
+class TestTripCheckTravelSignal(unittest.TestCase):
+    """일정 요청 강제는 여행 신호(이번 또는 직전 사용자 메시지)가 있을 때만 건다. (TASKS Phase 8 S4)"""
+
+    def forced(self, *humans: str, answers: tuple = ()) -> bool:
+        """사용자 메시지들(마지막이 이번 턴)로 require_trip_check를 돌려 check_trip_info 강제 여부를 돌려준다."""
+        from src.agent import require_trip_check
+        messages = []
+        for i, text in enumerate(humans):
+            messages.append(HumanMessage(text))
+            if i < len(humans) - 1:
+                messages.append(AIMessage(answers[i] if i < len(answers) else "답변"))
+        seen = {}
+        request = SimpleNamespace(messages=messages, tool_choice=None,
+                                  override=lambda **kw: SimpleNamespace(messages=messages, **kw))
+        require_trip_check.wrap_model_call(request, lambda r: seen.setdefault("choice", r.tool_choice))
+        return seen["choice"] == "check_trip_info"
+
+    def test_non_travel_plans_not_forced(self):
+        """여행 신호가 없는 계획 요청은 강제하지 않는다. 거절 답변 속 '여행' 단어로는 다음 턴에 강제되지 않는다."""
+        for text in ("파이썬 공부 계획 세워줘", "운동 스케줄 짜줘", "다이어트 식단 계획 좀 세워줘", "시험 공부 일정 짜줘",
+                     "우리나라 경제 공부 계획 세워줘"):
+            self.assertFalse(self.forced(text), text)
+        self.assertFalse(self.forced("파이썬 공부 계획 세워줘", "그럼 운동 스케줄 짜줘",
+                                     answers=("저는 여행 계획·조언을 돕는 에이전트예요. 여행 관련 질문을 해 주세요.",)))
+
+    def test_travel_plans_forced(self):
+        """여행 단어·박/일 표현·여행지 이름이 있으면 강제한다(평가 1·15번 문장, 당일 코스 포함)."""
+        for text in ("교토 2박3일 일정 짜줘. 혼자 인천에서 출발하고 다음 주 금요일에 떠나.", "후쿠오카 여행 일정 짜줘.",
+                     "3박4일 스케줄 좀 짜 줘", "여행 플랜 만들어줘", "담주 토욜 하루 코스 짜줘 혼자", "제주 동선 짜줘"):
+            self.assertTrue(self.forced(text), text)
+
+    def test_signal_in_previous_turn(self):
+        """지명이 직전 사용자 메시지에만 있어도 강제한다. TRAVEL_CONTEXT_TURNS보다 오래된 메시지는 보지 않는다."""
+        self.assertTrue(self.forced("오사카 맛집 추천해줘", "거기 일정 짜줘"))
+        old = ["오사카 맛집 추천해줘"] + ["고마워"] * config.TRAVEL_CONTEXT_TURNS
+        self.assertFalse(self.forced(*old, "일정 좀 잡아줘"))
+
+
+class TestDateResolutionForced(unittest.TestCase):
+    """상대 날짜 표현이 있는 턴은 resolve_dates를 강제한다. (TASKS Phase 8 S1-1)"""
+
+    def choice(self, messages, tool_choice=None):
+        """require_date_resolution을 가짜 요청에 적용하고 넘어간 tool_choice를 돌려준다."""
+        from src.agent import require_date_resolution
+        seen = {}
+        request = SimpleNamespace(messages=messages, tool_choice=tool_choice,
+                                  override=lambda **kw: SimpleNamespace(messages=messages, **kw))
+        require_date_resolution.wrap_model_call(request, lambda r: seen.setdefault("c", r.tool_choice))
+        return seen["c"]
+
+    @staticmethod
+    def trip_result(status: str, i: int = 0) -> list:
+        """check_trip_info 호출과 결과([확인 완료]/[확인 필요]) 한 쌍."""
+        return [AIMessage("", tool_calls=[{"name": "check_trip_info", "args": {}, "id": f"t{i}"}]),
+                ToolMessage(f"[{status}] …", tool_call_id=f"t{i}", name="check_trip_info")]
+
+    def test_forced_when_relative_date(self):
+        """이번 메시지에 상대 날짜가 있고 아직 resolve_dates를 안 불렀으면 강제, 불렀으면 강제하지 않는다."""
+        msgs = [HumanMessage("담주 토욜 오사카 날씨 어때?")]
+        self.assertEqual(self.choice(msgs), "resolve_dates")
+        done = msgs + [AIMessage("", tool_calls=[{"name": "resolve_dates", "args": {}, "id": "d1"}]),
+                       ToolMessage("날짜: 2026-11-14(토)", tool_call_id="d1", name="resolve_dates")]
+        self.assertIsNone(self.choice(done))
+        self.assertIsNone(self.choice([HumanMessage("내일 오사카 날씨 어때?")]))
+
+    def test_other_forcing_wins(self):
+        """정보 확인·일정표 작성 같은 다른 강제가 걸린 호출은 바꾸지 않는다. 되묻는 턴([확인 필요])에는 강제하지 않는다."""
+        msgs = [HumanMessage("다음 주 토요일 오사카 일정 짜줘")]
+        self.assertEqual(self.choice(msgs, tool_choice="check_trip_info"), "check_trip_info")
+        self.assertIsNone(self.choice(msgs + self.trip_result("확인 필요")))
+        self.assertEqual(self.choice(msgs + self.trip_result("확인 완료")), "resolve_dates")
+
+    def test_previous_turn_date_in_itinerary_stage(self):
+        """일정표 작성 단계면 날짜 표현이 직전 사용자 메시지에만 있어도 강제한다(앞 턴 날짜 결과는 생략돼 짐작하던 문제).
+        일정표 단계가 아니면 직전 메시지의 표현으로는 강제하지 않는다."""
+        before = [HumanMessage("담주 토욜 오사카 하루 코스 짜줘"), *self.trip_result("확인 필요"), AIMessage("예산은요?")]
+        self.assertEqual(self.choice(before + [HumanMessage("알아서 해줘"), *self.trip_result("확인 완료", 1)]),
+                         "resolve_dates")
+        self.assertIsNone(self.choice(before + [HumanMessage("고마워")]))
+
+
+class TestLocalTripOrigin(unittest.TestCase):
+    """당일치기·현지 일정은 출발지를 묻지 않는다. (TASKS Phase 8 S4)"""
+
+    def test_day_trip_and_local_skip_origin(self):
+        """당일치기(0박)와 이미 현지에 있는 일정은 출발지를 묻지도 가정하지도 않고 '출발지 이동 없음'으로 확정한다."""
+        for nights, local in ((0, False), (2, True)):
+            result = tools.evaluate_trip_info("오사카", nights, 1, "", 300000, "", set(), at_destination=local)
+            self.assertNotIn("origin", result["ask"])
+            self.assertNotIn("origin", result["assumed"])
+            self.assertEqual(result["confirmed"]["origin"], tools.LOCAL_TRIP_TEXT)
+        asked = tools.evaluate_trip_info("오사카", 0, 1, "", 300000, "", {"origin"})   # 전에 물어봤어도 가정하지 않음
+        self.assertNotIn("origin", asked["assumed"])
+
+    def test_overnight_trip_still_asks_origin(self):
+        """1박 이상이고 현지가 아니면 지금처럼 출발지를 묻고, 출발지를 말했으면 그대로 쓴다."""
+        self.assertIn("origin", tools.evaluate_trip_info("오사카", 1, 1, "", 300000, "", set())["ask"])
+        self.assertEqual(tools.evaluate_trip_info("오사카", 0, 1, "김해", 300000, "", set())["confirmed"]["origin"],
+                         "출발지 김해")
+
+    def test_itinerary_header_without_origin(self):
+        """출발지가 비어 있으면 일정표 머리 줄에 'OO 출발'을 붙이지 않는다."""
+        days = [tools.DayPlan(day=1, items=[tools.ScheduleItem(time="오전", place="오사카성")])]
+        text = tools.build_itinerary_text("오사카 하루", "오사카", 0, 1, "", days)
+        self.assertIn("오사카 · 0박1일 · 1명\n", text)
+        self.assertNotIn("출발", text)
 
 
 class TestItinerarySearchCap(unittest.TestCase):
@@ -1262,6 +1418,17 @@ class TestCliErrorMessage(unittest.TestCase):
             self.assertIn("/new", message)
             self.assertNotIn("잠시 후", message)
 
+    def test_new_chat_hint_per_channel(self):
+        """새 대화 안내는 채널에 맞춘다: 웹은 '새 대화' 버튼, MCP는 conversation_id 없이. 둘 다 /new를 알려 주지 않는다. (S4)"""
+        from main import error_message
+        from src import mcp_server
+        web = error_message(ACCESS_DENIED, "web")
+        self.assertIn("'새 대화' 버튼", web)
+        self.assertNotIn("/new", web)
+        mcp = mcp_server.agent_error_message(ACCESS_DENIED)
+        self.assertIn("conversation_id 없이", mcp)
+        self.assertNotIn("/new", mcp)
+
 
 class _FixtureHandler(BaseHTTPRequestHandler):
     """수집기 시험용 로컬 페이지: 정상 글, 로컬로 리다이렉트, 느리게 흘려보내기, 큰 글, PDF."""
@@ -1352,6 +1519,107 @@ class TestCollectorSafety(unittest.TestCase):
         with patch.object(config, "COLLECT_ALLOWED_HOSTS", self.allowed), patch.object(config, "COLLECT_MAX_BYTES", 1000):
             self.assertEqual(collector.collect(f"{self.base}/big").failure, "too_large")
             self.assertEqual(collector.collect(f"{self.base}/pdf").failure, "not_html")
+
+
+@tool("render_itinerary")
+def failing_render(title: str) -> str:
+    """항상 검증 실패(ToolException)를 내는 테스트용 일정표 도구."""
+    raise ToolException("일정표 렌더링 실패: days 수(3)가 nights+1(4)과 다릅니다. 고쳐서 다시 호출하세요.")
+
+
+failing_render.handle_tool_error = True   # 실제 render_itinerary처럼 실패를 오류 결과로 모델에 돌려준다
+
+
+@tool
+def endless_search(query: str) -> str:
+    """언제나 결과를 돌려주는 테스트용 검색 도구."""
+    return "검색 결과"
+
+
+class StubbornModel(BaseChatModel):
+    """받은 도구 목록에 render_itinerary가 있으면 계속 부르고, 없으면 글로 답하는 가짜 모델.
+    always_tool이면 도구 목록과 상관없이 매번 endless_search를 부른다(끝나지 않는 도구 호출 재현)."""
+    tool_names: list = []
+    always_tool: bool = False
+    seen_system: list = Field(default_factory=list)
+
+    @property
+    def _llm_type(self) -> str:
+        """가짜 모델 이름."""
+        return "stubborn"
+
+    def bind_tools(self, tools, **kwargs):
+        """이번 호출에 넘어온 도구 이름을 기억한 사본을 돌려준다."""
+        return self.model_copy(update={"tool_names": [getattr(t, "name", None) for t in tools]})
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        """도구 목록에 따라 도구 호출 또는 글 답변을 만든다."""
+        self.seen_system.append(str(messages[0].content) if messages and messages[0].type == "system" else "")
+        n = len(messages)
+        if self.always_tool:
+            message = AIMessage("", tool_calls=[{"name": "endless_search", "args": {"query": "q"}, "id": f"s{n}"}])
+        elif "render_itinerary" in self.tool_names:
+            message = AIMessage("", tool_calls=[{"name": "render_itinerary", "args": {"title": "t"}, "id": f"r{n}"}])
+        else:
+            message = AIMessage("일정표를 만들지 못했어요. 날짜 수가 맞지 않았습니다.")
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
+
+class TestTurnCallLimits(unittest.TestCase):
+    """턴당 호출 상한: 렌더링 실패 상한과 모델 호출 상한. (TASKS Phase 8 S2)"""
+
+    def agent(self, model):
+        """실제 상한 미들웨어·일정표 강제·도구 오류 처리를 붙인 에이전트."""
+        from src.agent import TurnModelCallLimit, cap_itinerary_renders, limit_itinerary_searches, stop_after_itinerary
+        return create_agent(model=model, tools=[failing_render, endless_search], checkpointer=InMemorySaver(),
+                            system_prompt="여행 도우미",
+                            middleware=[TurnModelCallLimit(), stop_after_itinerary, limit_itinerary_searches,
+                                        cap_itinerary_renders, make_tool_error_middleware()])
+
+    def test_render_failures_end_turn(self):
+        """렌더링이 계속 실패해도 상한(3번)만큼만 시도하고, 그다음 호출은 도구 없이 글로 사유를 답해 턴이 끝난다."""
+        from src.agent import RENDER_GIVE_UP_NOTE
+        model = StubbornModel()
+        result = self.agent(model).invoke({"messages": [{"role": "user", "content": "교토 일정 짜줘"}]},
+                                          {"configurable": {"thread_id": "r1"}})
+        renders = [m for m in result["messages"] if isinstance(m, ToolMessage) and m.name == "render_itinerary"]
+        self.assertEqual(len(renders), config.ITINERARY_MAX_RENDER_ATTEMPTS)
+        self.assertTrue(all(m.status == "error" for m in renders))
+        self.assertEqual(result["messages"][-1].content, "일정표를 만들지 못했어요. 날짜 수가 맞지 않았습니다.")
+        self.assertIn(RENDER_GIVE_UP_NOTE.split("]")[0], model.seen_system[-1])   # 마지막 호출에만 중단 안내
+        self.assertNotIn(RENDER_GIVE_UP_NOTE.split("]")[0], model.seen_system[0])
+
+    def test_forced_render_released_after_cap(self):
+        """일정표 강제(tool_choice=render_itinerary)가 걸려 있어도 실패 상한에 이르면 강제를 풀고 도구에서 뺀다."""
+        from src.agent import cap_itinerary_renders
+        msgs = [HumanMessage("교토 일정 짜줘")]
+        for i in range(config.ITINERARY_MAX_RENDER_ATTEMPTS):
+            msgs += [AIMessage("", tool_calls=[{"name": "render_itinerary", "args": {}, "id": f"r{i}"}]),
+                     ToolMessage("일정표 렌더링 실패", tool_call_id=f"r{i}", name="render_itinerary", status="error")]
+        seen = {}
+
+        def request(messages):
+            return SimpleNamespace(messages=messages, tool_choice="render_itinerary", tools=[failing_render, endless_search],
+                                   system_message=SystemMessage("여행 도우미"),
+                                   override=lambda **kw: SimpleNamespace(**kw))
+        cap_itinerary_renders.wrap_model_call(request(msgs), lambda r: seen.setdefault("capped", r))
+        self.assertIsNone(seen["capped"].tool_choice)
+        self.assertEqual([t.name for t in seen["capped"].tools], ["endless_search"])
+        cap_itinerary_renders.wrap_model_call(request(msgs[:-2]), lambda r: seen.setdefault("below", r))
+        self.assertEqual(seen["below"].tool_choice, "render_itinerary")   # 상한 전에는 그대로
+
+    def test_model_call_limit_ends_turn(self):
+        """도구 호출이 끝나지 않아도 모델 호출 상한(25번)에서 한국어 안내로 턴을 끝내고, 다음 턴은 다시 0부터 센다."""
+        from src.agent import MODEL_CALL_LIMIT_MESSAGE
+        agent = self.agent(StubbornModel(always_tool=True))
+        run = {"configurable": {"thread_id": "m1"}}
+        for question in ("교토 맛집 다 찾아줘", "오사카도"):
+            result = agent.invoke({"messages": [{"role": "user", "content": question}]}, run)
+            last_human = max(i for i, m in enumerate(result["messages"]) if m.type == "human")
+            turn = result["messages"][last_human + 1:]
+            self.assertEqual(sum(1 for m in turn if isinstance(m, AIMessage) and m.tool_calls),
+                             config.AGENT_MAX_MODEL_CALLS_PER_TURN)
+            self.assertEqual(turn[-1].content, MODEL_CALL_LIMIT_MESSAGE)
 
 
 if __name__ == "__main__":

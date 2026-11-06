@@ -25,7 +25,10 @@ class Run:
     """대화 하나의 진행 중인 답변. events는 (이벤트 이름, 데이터)를 순서대로 쌓기만 한다."""
     thread_id: str
     user_id: str
-    content: str  # 이번에 보낸 사용자 메시지 (지난 메시지 화면에서 진행 중인 턴을 가리는 데 쓴다)
+    content: str  # 이번에 보낸 사용자 메시지
+    # 실행을 시작할 때 대화 기록의 메시지 수. 지난 메시지 화면에서 진행 중인 턴을 가리는 기준이다(아직 시작 전이면 None).
+    # (S4-6: 전에는 글자가 같은 마지막 사용자 메시지로 찾아, 같은 질문을 다시 보내면 지난 턴 답변이 잘렸다)
+    base_count: int | None = None
     events: list[tuple[str, dict]] = field(default_factory=list)
     done: bool = False
     cancel: threading.Event = field(default_factory=threading.Event)
@@ -95,6 +98,9 @@ def start_run(thread_id: str, user_id: str, content: str, work: Callable[[Run], 
                     return
                 run.emit("progress", {"stage": WAITING_STAGE})
             try:
+                if run.cancel.is_set():  # 기다리는 사이 멈췄는데 자리를 얻은 경우: 시작하지 않는다(S4-6: 링크 수집·판정까지 가던 문제)
+                    run.emit("stopped", {"message": STOPPED_MESSAGE})
+                    return
                 work(run)
             finally:
                 _slots.release()

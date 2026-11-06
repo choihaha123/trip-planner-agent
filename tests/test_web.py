@@ -244,7 +244,8 @@ class TestThreadsApi(ChatTestCase):
         with patch.object(self.agent, "stream", side_effect=RuntimeError("boom")):
             _, events = self.send(thread_id, "안녕")
         self.assertEqual(events[-1][0], "error")
-        self.assertIn("/new", events[-1][1]["message"])
+        self.assertIn("'새 대화' 버튼", events[-1][1]["message"])   # 웹에 없는 CLI 명령 /new는 안내하지 않는다(S4)
+        self.assertNotIn("/new", events[-1][1]["message"])
         self.assertIsNone(runs.get_run(thread_id))
         self.assertEqual(self.send(thread_id, "오사카 저녁 메뉴")[1][-1][0], "done")
 
@@ -267,6 +268,18 @@ class TestThreadsApi(ChatTestCase):
         self.assertEqual(shown[1]["itinerary"]["days"][0]["items"][0]["place"], "금각사")
         self.assertEqual(shown[1]["content"], "# 교토 당일")                    # 줄글은 '글로 보기'용으로 그대로
         self.assertNotIn("itinerary", shown[3])
+
+    def test_history_skips_tool_steps_as_answer(self):
+        """도구 호출·도구 결과로 끝난 턴(멈춘 옛 기록)은 빈 말풍선이나 검색 결과를 답변으로 보이지 않는다. (S4-5)"""
+        from langchain_core.messages import HumanMessage, ToolMessage
+        shown = web_app.history_messages([
+            HumanMessage("오사카 일정 짜줘"),
+            AIMessage("찾아볼게요", tool_calls=[{"name": "search_travel_info", "args": {}, "id": "s1"}]),
+            ToolMessage("<reference>검색 결과</reference>", tool_call_id="s1", name="search_travel_info"),
+            HumanMessage("간사이공항에서 난바 가는 법"), AIMessage("난카이선을 타요")])
+        self.assertEqual(shown, [{"role": "user", "content": "오사카 일정 짜줘"},
+                                 {"role": "user", "content": "간사이공항에서 난바 가는 법"},
+                                 {"role": "assistant", "content": "난카이선을 타요"}])
 
     def test_requires_login(self):
         """로그인하지 않으면 대화 API는 401."""
@@ -381,9 +394,41 @@ class TestBackgroundRuns(WebTestCase):
         box["worker"].join(5)
         self.assertEqual(parse_sse(box["res"].text)[-1][0], "stopped")
         self.assertIsNone(runs.get_run(thread_id))
+        stopped_history = self.client.get(f"/api/threads/{thread_id}/messages").json()["messages"]
+        self.assertEqual(stopped_history, [{"role": "user", "content": "느린 질문"},              # S4-5: 새로고침해도
+                                           {"role": "assistant", "content": runs.STOPPED_MESSAGE}])  # 멈춤 안내가 남는다
         res = self.client.post(f"/api/threads/{thread_id}/messages", json={"content": "빠른 질문"})
         self.assertEqual(parse_sse(res.text)[-1][1]["answer"], "빠른 답변")
         self.assertEqual(self.client.post(f"/api/threads/{thread_id}/stop").json(), {"stopped": False})
+
+    def test_same_question_keeps_previous_answer(self):
+        """같은 질문을 다시 보내 아직 기록에 들어가기 전(자리 대기 중)이어도 지난 턴 답변이 화면에서 잘리지 않는다. (S4-6)"""
+        thread_id = self.new_thread()
+        GATE.set()
+        self.client.post(f"/api/threads/{thread_id}/messages", json={"content": "느린 질문"})
+        waiting = runs.Run(thread_id, "", "느린 질문")   # 같은 질문으로 자리를 기다리는 실행(base_count 아직 없음)
+        with patch.dict(runs._runs, {thread_id: waiting}):
+            history = self.client.get(f"/api/threads/{thread_id}/messages").json()
+        self.assertTrue(history["running"])
+        self.assertEqual(history["messages"][-1], {"role": "assistant", "content": "느린 답변"})
+
+    def test_stopped_while_waiting_does_not_start(self):
+        """자리를 기다리는 중에 멈추면, 그 뒤 자리가 나도 실행(링크 수집 등)을 시작하지 않는다. (S4-6)"""
+        held = 0
+        while runs._slots.acquire(blocking=False):   # 서버 전체 자리를 모두 차지한다
+            held += 1
+        started = threading.Event()
+        try:
+            run = runs.start_run("waiting-thread", "u", "질문", lambda r: started.set())
+            self.assertTrue(runs.stop_run("waiting-thread"))
+            runs._slots.release()
+            held -= 1
+            self.assertTrue(runs.wait_finished("waiting-thread", 5))
+        finally:
+            for _ in range(held):
+                runs._slots.release()
+        self.assertFalse(started.is_set())
+        self.assertEqual(run.events[-1][0], "stopped")
 
     def test_delete_while_running(self):
         """답변 중인 대화를 지우면 먼저 멈추고 끝나기를 기다린 뒤 목록·기록을 지운다(지운 뒤 기록이 되살아나지 않음)."""

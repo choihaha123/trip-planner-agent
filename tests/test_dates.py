@@ -72,6 +72,31 @@ class TestDates(unittest.TestCase):
             with self.subTest(kwargs=kwargs), self.assertRaises(DateError):
                 compute_dates(TODAY, **kwargs)
 
+    def test_fix_weekdays(self):
+        """답변 속 '날짜(요일)'의 요일이 달력과 다르면 요일만 고친다. 맞으면 그대로, 형식은 유지한다. (S1-1)"""
+        from src.tools import fix_weekdays
+        text, fixed = fix_weekdays("다음 주 토요일 11/15(토), 11월 14일 토요일, 2026-11-14(토), 11월 15일(토요일)", TODAY)
+        self.assertEqual(text, "다음 주 토요일 11/15(일), 11월 14일 토요일, 2026-11-14(토), 11월 15일(일요일)")
+        self.assertEqual(len(fixed), 2)
+        self.assertEqual(fix_weekdays("1월 3일(토)", TODAY)[0], "1월 3일(일)")       # 지난 1월 → 내년(2027-01-03 일)
+        self.assertEqual(fix_weekdays("2/30(월) 같은 없는 날짜", TODAY)[0], "2/30(월) 같은 없는 날짜")
+
+    def test_relative_date_expressions(self):
+        """상대 날짜 표현(다음 주·담주·토욜·모레·N일 뒤 등)은 날짜 계산 강제 대상이고, 오늘·내일은 아니다. (S1-1)"""
+        from src.tools import RELATIVE_DATE
+        for text in ("담주 토욜 오사카", "다음 주말", "이번 주 금요일", "모레 날씨", "3일 뒤", "1주일 후", "다음 달 도쿄"):
+            self.assertTrue(RELATIVE_DATE.search(text), text)
+        for text in ("내일 날씨", "오늘 환율", "오사카 맛집"):
+            self.assertIsNone(RELATIVE_DATE.search(text), text)
+
+    def test_leap_day_without_year(self):
+        """연도 없는 02-29는 오늘 이후 가장 가까운 윤년의 2월 29일이다(평년에도 오류 없음). 연도가 있으면 그대로 검사한다. (S1-4)"""
+        self.assertEqual(compute_dates(TODAY, date_text="02-29")["dates"], [d(2, 29, 2028)])
+        self.assertEqual(compute_dates(d(2, 29, 2028), date_text="02-29")["dates"], [d(2, 29, 2028)])   # 그날 당일
+        self.assertEqual(compute_dates(d(3, 1, 2028), date_text="02-29")["dates"], [d(2, 29, 2032)])    # 지났으면 다음 윤년
+        with self.assertRaises(DateError):
+            compute_dates(TODAY, date_text="2027-02-29")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -683,7 +683,7 @@ function renderItinerary(it, body) {
       `<li>${sourceLink(s, s.saved ? "저장 자료" : "출처")}</li>`).join("")}</ul></details>` : "";
   return `<article class="itin" data-title="${esc(it.title)}">
     <header class="itin-head"><div><div class="itin-title">${esc(it.title)}</div>
-      <div class="itin-meta">${esc(period)} · ${esc(it.people)}명 · ${esc(it.origin)} 출발</div></div>
+      <div class="itin-meta">${esc(period)} · ${esc(it.people)}명${it.origin ? ` · ${esc(it.origin)} 출발` : ""}</div></div>
       <button type="button" class="itin-save">이미지로 저장</button></header>
     ${changes}${assumptions}
     <div class="itin-tabs" role="tablist">${tabs}</div>${panels}

@@ -13,15 +13,16 @@ from zoneinfo import ZoneInfo
 from langchain.agents import create_agent
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
-from langchain.agents.middleware import (ContextEditingMiddleware, ModelRequest, ToolErrorMiddleware, after_model,
-                                         before_model, dynamic_prompt, wrap_model_call)
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain.agents.middleware import (ContextEditingMiddleware, ModelCallLimitMiddleware, ModelRequest,
+                                         ToolErrorMiddleware, after_model, before_model, dynamic_prompt, hook_config,
+                                         wrap_model_call)
+from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langchain_aws import ChatBedrockConverse
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from src import config
-from src.tools import (annotate_answer_prices, calculate_budget, check_trip_info, get_exchange_rate, get_weather,
-                       render_itinerary, resolve_dates, search_travel_info, web_search)
+from src.tools import (RELATIVE_DATE, annotate_answer_prices, calculate_budget, check_trip_info, fix_krw_conversions,
+                       fix_weekdays, get_exchange_rate, get_weather, render_itinerary, resolve_dates, search_travel_info, web_search)
 from src.memory import MemoryMiddleware, build_memory_prompt
 from src.middleware import UrlPreprocessMiddleware
 from src.tracing import TracingMiddleware
@@ -74,7 +75,7 @@ BASE_SYSTEM_PROMPT = (
     "- 결과가 [확인 필요]면 일정을 만들지 말고 물어볼 항목을 한 번에 묶어 묻는다. 사용자가 답하거나 '모르겠다', '알아서 해줘'라고 하면 check_trip_info를 다시 호출한다.\n"
     "- 결과가 [확인 완료]면 필요한 검색(search_travel_info, 부족하면 web_search)·날짜(resolve_dates)·날씨 조회를 마친 뒤, 일정표를 글로 쓰지 말고 render_itinerary 도구에 구조화해 넘긴다. 이 도구 결과가 그대로 최종 답변이 된다.\n"
     "- [확인 완료] 뒤의 검색은 일정에 필요한 것(이동 방법·관광지·맛집·입장료·숙박비·식비 등)을 처음에 한 번에 묶어 동시에 호출하고, 부족한 것만 한 번 더 보충한다. 검색 횟수는 프로그램이 제한하므로 그 뒤에는 모은 자료로 일정표를 만든다.\n"
-    "- render_itinerary에는 가정한 조건(assumptions), 일정마다 장소·이동수단·소요시간·근거 출처를 넣고, 비용 항목이 있으면 budget_items에 넣어 예산을 함께 계산한다. 사용자가 예산을 말했으면 render_itinerary 전에 같은 비용 항목으로 calculate_budget을 먼저 호출해 초과 여부를 확인하고, 조정안이 필요하다고 나오면 처음부터 adjustments에 넣는다(초과 폭이 작으면 조정안 없이 진행). 입장료는 admission에 넣고, 검색 결과에서 찾은 출처가 있으면 함께 넣는다. 출처가 없는 가격은 프로그램이 '(출처 없음, 사용자 확인 필요)'를 붙여 표시한다.\n"
+    "- render_itinerary에는 가정한 조건(assumptions), 일정마다 장소·이동수단·소요시간·근거 출처를 넣고, 비용 항목이 있으면 budget_items에 넣어 예산을 함께 계산한다. 사용자가 예산을 말했으면 render_itinerary 전에 같은 비용 항목으로 calculate_budget을 먼저 호출해 초과 여부를 확인하고, 조정안이 필요하다고 나오면 처음부터 adjustments에 넣는다(초과 폭이 작으면 조정안 없이 진행). 조정안은 바꿀 비용 항목 이름과 새 금액(changes)으로 넣고, 절감액·'예산 안으로 가능' 같은 효과는 쓰지 않는다(프로그램이 다시 계산해 붙인다). 일정표가 아닌 답변에서 조정안을 말할 때도 calculate_budget을 adjustments와 함께 불러 나온 절감액·판정만 쓴다. 입장료는 admission에 넣고, 검색 결과에서 찾은 출처가 있으면 함께 넣는다. 출처가 없는 가격은 프로그램이 '(출처 없음, 사용자 확인 필요)'를 붙여 표시한다.\n"
     "- render_itinerary·calculate_budget의 출처 칸(source, admission.source, extra_sources, budget_items.source)에는 제목·URL을 쓰지 말고 검색 결과 <reference>의 id(예: r3f9a1c)만 쓴다. 프로그램이 제목·URL을 채운다.\n"
     "- 일정표가 아닌 단발성 질문(맛집, 교통, 날씨, 환율 등)에는 check_trip_info를 쓰지 않는다.\n"
     "[자료 검색·출처 규칙]\n"
@@ -114,6 +115,8 @@ def system_prompt_with_date(request: ModelRequest) -> str:
 @after_model
 def label_prices_in_answer(state, runtime):
     """최종 답변(도구 호출 없는 AI 메시지)의 가격 표현마다 근거를 확인해 붙인다(annotate_answer_prices).
+    그 전에 '외화(약 ○○원)' 환산을 실제 환율로 다시 계산해 고친다(fix_krw_conversions, S1-3: 모델 암산으로 한 답변 안에
+    같은 가격의 원화가 셋으로 나왔다).
     이번 턴 검색 결과에서 온 금액은 답변이 그 출처를 인용하지 않았을 때만 '(출처: 제목 URL)', 어느 도구 결과에도 없는
     금액은 '(출처 없음, 사용자 확인 필요)'. 답변에 URL이 있어도 가격마다 판정한다(R1). (SERVICE 2.6, 일정표는 render_itinerary가 따로 처리)"""
     messages = state["messages"]
@@ -125,12 +128,34 @@ def label_prices_in_answer(state, runtime):
         return None
     turn_start = max((i for i, m in enumerate(messages) if m.type == "human"), default=0)
     tool_text = "\n".join(str(m.content) for m in messages[turn_start:] if m.type == "tool")
-    annotated, cited, labeled = annotate_answer_prices(text, tool_text)
-    if not cited and not labeled:
+    # 외화 가격 옆 원화 환산은 먼저 실제 환율로 다시 계산해 고치고, 확인된 원화 금액은 근거로 친다 (S1-3)
+    text, converted, confirmed = fix_krw_conversions(text)
+    if converted:
+        logger.warning("답변 속 원화 환산 고침", extra={"event": "krw_conversion_fixed", "data": {"fixed": converted}})
+    annotated, cited, labeled = annotate_answer_prices(text, tool_text + "\n" + confirmed)
+    if not cited and not labeled and not converted:
         return None
     logger.info("답변 속 가격 근거 표시", extra={"event": "unsourced_price_labeled", "data": {
         "cited": cited, "labeled": labeled}})
     return {"messages": [AIMessage(content=annotated, id=last.id)]}  # 같은 id로 교체
+
+
+@after_model
+def fix_weekdays_in_answer(state, runtime):
+    """최종 답변(도구 호출 없는 AI 메시지)의 '날짜(요일)'이 달력과 다르면 파이썬 달력의 요일로 고친다. (S1-1 안전망)
+    날짜 자체는 resolve_dates 강제 호출(require_date_resolution)로 맞추고, 여기서는 날짜와 요일의 모순만 없앤다."""
+    messages = state["messages"]
+    last = messages[-1] if messages else None
+    if last is None or last.type != "ai" or getattr(last, "tool_calls", None):
+        return None
+    text = get_text(last)
+    if not text:
+        return None
+    fixed_text, fixed = fix_weekdays(text, datetime.now(ZoneInfo(config.TIMEZONE)).date())
+    if not fixed:
+        return None
+    logger.warning("답변 속 요일 고침", extra={"event": "weekday_fixed", "data": {"fixed": fixed}})
+    return {"messages": [AIMessage(content=fixed_text, id=last.id)]}  # 같은 id로 교체
 
 
 # 일정표를 만들어 달라는 요청: '일정·코스·스케줄·플랜·동선·계획' 뒤 8글자 안에 만들기 동사가 오거나, '여행 계획해/좀/부탁', '일정표'.
@@ -139,16 +164,37 @@ _PLAN_NOUN = r"(?:일정|코스|스케줄|플랜|동선|계획)"
 _PLAN_VERB = r"(?:짜|만들|세워|세우|잡아|구성|부탁)"
 ITINERARY_REQUEST = re.compile(rf"일정표|{_PLAN_NOUN}[^.?!\n]{{0,8}}?{_PLAN_VERB}|여행\s*계획\s*(?:해|좀|부탁)")
 
+# 여행 신호: 여행 단어, 박/일 표현, 자주 나오는 여행지 이름. 일정 요청 강제는 이 신호가 함께 있을 때만 건다. (TASKS Phase 8 S4)
+# (2026-11-06: '파이썬 공부 계획 세워줘', '운동 스케줄 짜줘'에도 강제가 걸려 거절 대신 목적지·예산을 되물었다)
+# 목록에 없는 지명은 강제 없이 시스템 프롬프트 [일정 요청 규칙]에 맡긴다.
+_TRAVEL_WORD = (r"여행|관광|휴가|투어|배낭|신혼|숙소|호텔|료칸|게스트하우스|항공|비행기|공항|렌터카|명소|"
+                r"\d+\s*박|당일\s*치기|하루\s*코스|반나절")
+_DESTINATION = (r"일본|도쿄|오사카|교토|고베|후쿠오카|삿포로|홋카이도|오키나와|나고야|요코하마|하코네|"
+                r"제주|부산|강릉|경주|전주|여수|속초|대만|타이베이|홍콩|마카오|태국|방콕|치앙마이|베트남|다낭|하노이|"
+                r"호치민|나트랑|싱가포르|발리|괌|사이판|세부|보라카이|상하이|베이징|유럽|파리|런던|로마|하와이|뉴욕")
+TRAVEL_SIGNAL = re.compile(rf"{_TRAVEL_WORD}|{_DESTINATION}")
+
+
+def has_travel_signal(messages: list, last_human: int) -> bool:
+    """이번 사용자 메시지나 직전 사용자 메시지들(TRAVEL_CONTEXT_TURNS개)에 여행 신호가 있으면 True.
+    '거기 일정 짜줘'처럼 지명이 앞 턴에만 있는 요청도 잡는다. 답변은 보지 않는다(거절 답변의 '여행' 단어에 걸리지 않게)."""
+    humans = [m for m in messages[:last_human + 1] if getattr(m, "type", "") == "human"]
+    recent = humans[-(config.TRAVEL_CONTEXT_TURNS + 1):]
+    return any(TRAVEL_SIGNAL.search(get_text(m) or "") for m in recent)
+
 
 @wrap_model_call
 def require_trip_check(request: ModelRequest, handler):
-    """이번 턴 첫 모델 호출에서 사용자 메시지가 일정 요청 표현을 담고 있으면 check_trip_info를 먼저 호출하게 강제한다.
-    (프롬프트 규칙만으로는 LLM이 도구 없이 직접 되묻는 경우가 있어, 판정은 파이썬 키워드 규칙으로 한다)"""
+    """이번 턴 첫 모델 호출에서 사용자 메시지가 일정 요청 표현을 담고 있고 여행 신호도 있으면 check_trip_info를 먼저 호출하게 강제한다.
+    (프롬프트 규칙만으로는 LLM이 도구 없이 직접 되묻는 경우가 있어, 판정은 파이썬 키워드 규칙으로 한다)
+    여행 신호가 없으면 강제하지 않아, 비여행 계획 요청은 시스템 프롬프트 [가드레일]대로 도구 없이 거절된다."""
     messages = request.messages
     last_human = max((i for i, m in enumerate(messages) if m.type == "human"), default=None)
     first_call = last_human is not None and last_human == len(messages) - 1
     if first_call and ITINERARY_REQUEST.search(get_text(messages[last_human]) or ""):
-        return handler(request.override(tool_choice="check_trip_info"))
+        if has_travel_signal(messages, last_human):
+            return handler(request.override(tool_choice="check_trip_info"))
+        logger.info("일정 요청 표현이지만 여행 신호 없음 → 정보 확인 강제 안 함", extra={"event": "trip_check_skipped"})
     return handler(request)
 
 
@@ -200,7 +246,99 @@ def limit_itinerary_searches(request: ModelRequest, handler):
     return handler(request)
 
 
-PREVIOUS_TURN_TOOL_RESULT = "[지난 턴 도구 결과 생략: 그 턴 답변에 반영됨. 지금 필요하면 다시 검색한다]"
+def date_resolution_pending(messages: list) -> bool:
+    """이번 턴에 resolve_dates를 불러야 하는데 아직 안 불렀으면 True. (S1-1)
+    - 이번 사용자 메시지에 상대 날짜 표현(RELATIVE_DATE)이 있으면 필요하다.
+    - 일정표 작성 단계(check_trip_info [확인 완료])면 직전 사용자 메시지(TRAVEL_CONTEXT_TURNS개)의 표현도 본다:
+      앞 턴의 날짜 결과는 다음 턴에 '지난 턴 도구 결과 생략'으로 바뀌어, 모델이 날짜를 짐작했다.
+    - 이번 턴 check_trip_info가 [확인 필요](되묻는 턴)면 강제하지 않는다(답을 받은 다음 턴에 계산한다)."""
+    last_human = max((i for i, m in enumerate(messages) if getattr(m, "type", "") == "human"), default=None)
+    if last_human is None:
+        return False
+    turn = messages[last_human + 1:]
+    if any(getattr(m, "type", "") == "tool" and getattr(m, "name", "") == "resolve_dates" for m in turn):
+        return False
+    trip_results = [str(m.content) for m in turn if getattr(m, "type", "") == "tool" and getattr(m, "name", "") == "check_trip_info"]
+    if trip_results and trip_results[-1].startswith("[확인 필요]"):
+        return False
+    if RELATIVE_DATE.search(get_text(messages[last_human]) or ""):
+        return True
+    if trip_results and trip_results[-1].startswith("[확인 완료]"):
+        humans = [m for m in messages[:last_human] if getattr(m, "type", "") == "human"]
+        return any(RELATIVE_DATE.search(get_text(m) or "") for m in humans[-config.TRAVEL_CONTEXT_TURNS:])
+    return False
+
+
+@wrap_model_call
+def require_date_resolution(request: ModelRequest, handler):
+    """상대 날짜 표현이 있는 턴에서 아직 resolve_dates를 안 불렀으면, 다른 강제(정보 확인·예산 먼저·일정표 작성)가 없는 호출을
+    resolve_dates로 강제한다. 날짜는 모델이 짐작하지 않고 파이썬 계산 결과만 쓴다. (TASKS Phase 8 S1-1)"""
+    if request.tool_choice is None and date_resolution_pending(request.messages):
+        logger.info("상대 날짜 표현 → 날짜 계산 먼저", extra={"event": "date_resolution_forced"})
+        return handler(request.override(tool_choice="resolve_dates"))
+    return handler(request)
+
+
+RENDER_GIVE_UP_NOTE = ("[일정표 작성 중단] 이번 턴에 render_itinerary가 {count}번 실패해 더 시도하지 않는다. "
+                       "도구를 더 부르지 말고, 일정표를 만들지 못한 이유(마지막 오류 내용)를 사용자에게 쉬운 말로 설명하고 "
+                       "어떤 조건을 바꾸면 다시 만들 수 있는지 한두 가지 제안한다. 이 대괄호 표시와 도구·필드 이름"
+                       "(render_itinerary, nights, days 등)은 답변에 쓰지 않는다.")
+
+
+def failed_render_count(messages: list) -> int:
+    """이번 턴(마지막 사용자 메시지 이후)에 오류로 끝난 render_itinerary 결과 수를 센다."""
+    last_human = max((i for i, m in enumerate(messages) if getattr(m, "type", "") == "human"), default=-1)
+    return sum(1 for m in messages[last_human + 1:] if getattr(m, "type", "") == "tool"
+               and getattr(m, "name", "") == "render_itinerary" and getattr(m, "status", "") == "error")
+
+
+@wrap_model_call
+def cap_itinerary_renders(request: ModelRequest, handler):
+    """일정표 렌더링이 이번 턴에 상한(ITINERARY_MAX_RENDER_ATTEMPTS)만큼 실패하면 render_itinerary를 도구 목록에서 빼고
+    강제 호출도 풀어, 모델이 글로 사유를 답하고 턴을 끝내게 한다. (TASKS Phase 8 S2)
+    구체성 재시도는 1회로 제한돼 있지만, 일수 불일치·숙박 단위·환율 오류 같은 실패는 횟수 제한 없이 반복될 수 있었다."""
+    failures = failed_render_count(request.messages)
+    if failures < config.ITINERARY_MAX_RENDER_ATTEMPTS:
+        return handler(request)
+    logger.warning("일정표 렌더링 실패 상한 → 글 답변으로 전환", extra={"event": "itinerary_render_capped",
+                                                                "data": {"failures": failures}})
+    note = RENDER_GIVE_UP_NOTE.format(count=failures)
+    system = request.system_message
+    content = (list(system.content) + [{"type": "text", "text": note}] if system and isinstance(system.content, list)
+               else f"{system.content}\n\n{note}" if system else note)
+    tools = [t for t in request.tools if getattr(t, "name", None) != "render_itinerary"]
+    return handler(request.override(tools=tools, tool_choice=None, system_message=SystemMessage(content=content)))
+
+
+MODEL_CALL_LIMIT_MESSAGE = ("이번 요청은 처리 단계가 너무 많아져 여기서 멈췄습니다. 지금까지 찾은 내용으로는 답을 마무리하지 못했어요. "
+                            "요청을 조금 나눠서(예: 도시나 날짜 범위를 줄여서) 다시 말씀해 주세요.")
+
+
+class TurnModelCallLimit(ModelCallLimitMiddleware):
+    """한 턴(에이전트 실행 한 번)의 모델 호출 수를 AGENT_MAX_MODEL_CALLS_PER_TURN으로 제한한다. (TASKS Phase 8 S2)
+    기본 미들웨어는 영어 문구('Model call limits exceeded')로 끝내므로, 사용자에게 보일 한국어 안내로 바꾼다."""
+
+    def __init__(self):
+        """턴(run) 단위 상한만 쓴다. 대화(thread) 전체 상한은 두지 않는다."""
+        super().__init__(run_limit=config.AGENT_MAX_MODEL_CALLS_PER_TURN, exit_behavior="end")
+
+    @hook_config(can_jump_to=["end"])
+    def before_model(self, state, runtime):
+        """상한에 이르면 안내 문구를 최종 답변으로 남기고 턴을 끝낸다."""
+        result = super().before_model(state, runtime)
+        if result is None:
+            return None
+        logger.warning("턴당 모델 호출 상한 도달", extra={"event": "model_call_capped",
+                                                    "data": {"limit": self.run_limit}})
+        return {**result, "messages": [AIMessage(content=MODEL_CALL_LIMIT_MESSAGE)]}
+
+    @hook_config(can_jump_to=["end"])
+    async def abefore_model(self, state, runtime):
+        """비동기 실행에서도 같은 판정을 쓴다."""
+        return self.before_model(state, runtime)
+
+
+PREVIOUS_TURN_TOOL_RESULT ="[지난 턴 도구 결과 생략: 그 턴 답변에 반영됨. 지금 필요하면 다시 검색한다]"
 
 
 class ClearPreviousTurnTools:
@@ -362,8 +500,12 @@ def build_agent(checkpointer=None):
         # 앞이 바깥쪽이다. 실행 추적은 맨 안쪽에 두어 대체 모델로 시도한 호출도 각각 기록한다.
         # 도구 오류 처리는 실행 추적 바로 바깥에 두어, 추적에는 오류로 남고 대화 기록에는 오류 결과로 짝이 맞게 한다.
         # after_agent는 뒤쪽부터 실행되므로, 기억 알림이 먼저 붙고 그 아래에 링크 처리 결과가 붙는다.
-        middleware=[UrlPreprocessMiddleware(), MemoryMiddleware(), system_prompt_with_date, stop_after_itinerary, label_prices_in_answer,
-                    require_trip_check, limit_itinerary_searches, make_history_trim_middleware(), repair_orphan_tool_calls,
+        # 턴당 모델 호출 상한은 맨 앞에 두어 상한에 이르면 다른 before_model 처리 없이 바로 끝낸다.
+        # 렌더링 실패 상한은 일정표 강제(require_trip_check·limit_itinerary_searches) 안쪽에 두어 그 강제를 풀 수 있게 한다.
+        # 날짜 계산 강제는 다른 강제가 없는 호출에만 걸리므로 그 강제들보다 안쪽에 둔다.
+        middleware=[TurnModelCallLimit(), UrlPreprocessMiddleware(), MemoryMiddleware(), system_prompt_with_date,
+                    stop_after_itinerary, label_prices_in_answer, fix_weekdays_in_answer, require_trip_check,
+                    limit_itinerary_searches, require_date_resolution, cap_itinerary_renders, make_history_trim_middleware(), repair_orphan_tool_calls,
                     make_fallback_middleware(make_fallback_llms()), make_tool_error_middleware(), TracingMiddleware()],
         checkpointer=checkpointer,
         context_schema=AgentContext,

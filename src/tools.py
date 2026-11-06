@@ -1,5 +1,6 @@
 # tools.py - 도메인 도구 (docs/SPEC.md 1.2)
 # 여행 정보 검색(RAG 먼저)·웹 검색 등 에이전트가 호출하는 도구를 둔다.
+import calendar
 import hashlib
 import html
 import logging
@@ -648,7 +649,8 @@ def render_budget(result: dict, for_user: bool = False) -> str:
             line += f" — 최대 {format_money(j['diff'], cur)} 초과"
             if not for_user and needs_adjustments(j):
                 line += (f". 초과 폭이 {config.BUDGET_ADJUSTMENT_THRESHOLD:.0%}를 넘으므로 숙박 등급·일정 조정 등 조정안을 제시하세요"
-                         " (일정표면 render_itinerary의 adjustments에 넣는다).")
+                         " (일정표면 render_itinerary의 adjustments에, 일반 답변이면 이 도구를 adjustments와 함께 다시 불러"
+                         " 절감액·적용 후 판정을 계산한다. 조정안의 효과를 직접 계산하거나 단언하지 않는다).")
             elif not for_user:
                 line += f". 초과 폭이 {config.BUDGET_ADJUSTMENT_THRESHOLD:.0%} 이내라 조정안 없이 진행해도 된다."
         lines.append(line)
@@ -661,10 +663,118 @@ def render_budget(result: dict, for_user: bool = False) -> str:
     return "\n".join(lines)
 
 
+# ---------- 예산 조정안 재계산 (S1-2): 조정안 문구는 모델이 쓰고, 절감액·적용 후 판정은 파이썬이 다시 계산해 붙인다 ----------
+class AdjustmentChange(BaseModel):
+    """조정안에서 바꾸는 비용 항목 하나."""
+    item: str = Field(description="바꿀 비용 항목 이름 (budget_items/items의 name 그대로)")
+    new_min_amount: float = Field(description="바꾼 뒤 단위 1개당 최소 금액 (원래 항목과 같은 통화·단위. 항목을 빼면 0)")
+    new_max_amount: float = Field(description="바꾼 뒤 단위 1개당 최대 금액 (값이 하나면 최소와 같게)")
+
+
+class BudgetAdjustment(BaseModel):
+    """예산 조정안 하나. 절감액과 적용 후 예산 판정은 프로그램이 다시 계산해 붙인다."""
+    description: str = Field(description="무엇을 바꾸는지만 짧게 (예: 숙박을 난바 비즈니스호텔로). "
+                                         "절감액·'예산 안으로 가능' 같은 판정은 쓰지 않는다(프로그램이 계산해 붙인다)")
+    changes: list[AdjustmentChange] = Field(default_factory=list, description=(
+        "이 조정안으로 바뀌는 비용 항목과 새 금액. 금액 효과를 계산할 수 없는 조정(일정 순서 변경 등)만 비운다"))
+
+
+# 조정안 설명 속 판정·절감 단언. 있으면 설명을 프로그램이 만든 '항목: 금액 → 금액'으로 바꾼다(판정과 모순되는 단언 방지).
+_ADJUSTMENT_CLAIM = re.compile(r"예산\s*(?:내|안|이내|범위|에\s*맞|을\s*맞|맞추)|절감|절약|아낄|맞출\s*수")
+
+
+def _name_key(name: str) -> str:
+    """항목 이름 비교용(공백·대소문자 무시)."""
+    return re.sub(r"\s+", "", name or "").lower()
+
+
+def verdict_phrase(judgement: dict, currency: str) -> str:
+    """예산 판정을 '예산 안 (최대값 기준 N 여유)'처럼 금액과 함께 쓴다."""
+    label = VERDICT_LABELS[judgement["verdict"]]
+    if judgement["verdict"] == "within":
+        return f"{label} (최대값 기준 {format_money(-judgement['diff'], currency)} 여유)"
+    if judgement["verdict"] == "near":
+        return f"{label} (최대 {format_money(judgement['diff'], currency)} 넘을 수 있음)"
+    return f"{label} (최대 {format_money(judgement['diff'], currency)} 초과)"
+
+
+def evaluate_adjustments(adjustments: list[BudgetAdjustment], items: list[BudgetItem], people: int, nights: int,
+                         budget: float | None, budget_basis: str, display_currency: str, base_result: dict,
+                         rate_fn: Callable[[str, str], tuple[float, int]] | None = None) -> list[tuple[str, str]]:
+    """조정안마다 비용 항목을 바꿔 compute_budget을 다시 돌리고 (설명, 계산 결과 문구)를 돌려준다. 금액이 바뀌는 조정안이
+    둘 이상이면 끝에 '모두 적용하면' 줄을 더한다. 조정안이 꼭 필요한데(초과 15% 넘음) 금액이 바뀌는 조정안이 없으면 BudgetError.
+    바꾼 금액은 출처를 확인하지 않은 값이라 출처 없음 표시를 붙인다. (SERVICE 2.3, TASKS Phase 8 S1-2)"""
+    by_name = {_name_key(it.name): it for it in items}
+    cur = base_result["currency"]
+    base_max = base_result["group_total"][1]
+    if needs_adjustments(base_result["judgement"]) and not any(a.changes for a in adjustments):
+        raise BudgetError("조정안 중 최소 하나는 changes(바꿀 비용 항목과 새 금액)를 넣어야 절감액과 적용 후 판정을 계산할 수 있습니다.")
+
+    def effect(changed: dict[str, AdjustmentChange]) -> str:
+        """바뀐 항목을 적용한 예산을 다시 계산해 절감액·적용 후 판정 문구를 만든다."""
+        new_items = [it.model_copy(update={"min_amount": changed[_name_key(it.name)].new_min_amount,
+                                           "max_amount": changed[_name_key(it.name)].new_max_amount})
+                     if _name_key(it.name) in changed else it for it in items]
+        new = compute_budget(new_items, people, nights, budget, budget_basis, display_currency, rate_fn)
+        saved = base_max - new["group_total"][1]
+        text = (f"일행 총액 최대 {format_money(saved, cur)} 절감(1인 {format_money(saved / people, cur)})" if saved > 0
+                else "총액이 줄지 않음")
+        text += f", 적용 후 일행 총액 {format_range(*new['group_total'], cur)}"
+        if new["judgement"]:
+            text += f", 적용 후 판정: {verdict_phrase(new['judgement'], cur)}"
+        return text
+
+    lines, combined = [], {}
+    for adj in adjustments:
+        if not adj.changes:
+            lines.append((adj.description, "금액 효과는 계산하지 않음"))
+            continue
+        changed = {}
+        for ch in adj.changes:
+            key = _name_key(ch.item)
+            if key not in by_name:
+                raise BudgetError(f"조정안의 항목 '{ch.item}'이 비용 항목에 없습니다. 비용 항목 이름 중 하나를 그대로 쓰세요: "
+                                  + ", ".join(it.name for it in items))
+            changed[key] = ch
+        moves = []
+        for key, ch in changed.items():
+            it = by_name[key]
+            item_cur = normalize_currency(it.currency)
+            after = format_range(ch.new_min_amount, ch.new_max_amount, item_cur)
+            after += "" if ch.new_max_amount == 0 else f" ({config.NO_SOURCE_LABEL})"
+            moves.append(f"{it.name} {format_range(it.min_amount, it.max_amount, item_cur)} → {after}")
+        description = adj.description
+        if _ADJUSTMENT_CLAIM.search(description or ""):  # 판정·절감 단언은 지우고 바꾸는 내용만 남긴다
+            logger.info("조정안 설명의 판정 단언 제거", extra={"event": "adjustment_claim_removed", "data": {"text": description}})
+            description = ", ".join(by_name[k].name for k in changed) + " 금액 조정"
+        lines.append((description, f"{'; '.join(moves)} → {effect(changed)}"))
+        combined.update(changed)
+    if sum(1 for a in adjustments if a.changes) >= 2:
+        lines.append(("모두 적용하면", effect(combined)))
+    return lines
+
+
+def adjustment_line(adjustment: str | tuple[str, str], mark: Callable[[str], str] | None = None) -> str:
+    """조정안 한 줄. (설명, 계산 결과)면 '설명: 계산 결과'. 출처 없는 가격 표시(mark)는 모델이 쓴 설명에만 붙인다."""
+    mark = mark or (lambda text: label_unsourced_prices(text)[0])
+    if isinstance(adjustment, str):
+        return mark(adjustment)
+    return f"{mark(adjustment[0])}: {adjustment[1]}"
+
+
+def render_adjustments(lines: list[tuple[str, str]]) -> str:
+    """조정안 재계산 결과를 LLM에 돌려줄 글로 만든다(calculate_budget 결과 끝에 붙인다)."""
+    out = ["예산 조정안(프로그램이 다시 계산):"] + [f"- {d}: {e}" for d, e in lines]
+    out.append("조정안을 안내할 때는 위 절감액·적용 후 총액·판정을 그대로 쓰고, 판정과 다른 말('예산 안으로 가능' 등)을 덧붙이지 않는다. "
+               "다른 조정안을 더 말하려면 이 도구를 adjustments와 함께 다시 부르고, 계산하지 않은 조정안에는 절감액·판정을 쓰지 않는다.")
+    return "\n".join(out)
+
+
 @tool
 def calculate_budget(items: list[BudgetItem], people: int, nights: int, runtime: ToolRuntime[Any],
                      budget: float | None = None, budget_basis: Literal["total", "per_person"] = "total",
-                     display_currency: str = config.BASE_CURRENCY) -> str:
+                     display_currency: str = config.BASE_CURRENCY,
+                     adjustments: list[BudgetAdjustment] | None = None) -> str:
     """여행 예산을 계산한다. 곱셈·합계·환율 환산·예산 판정은 모두 이 도구가 하므로 직접 계산하지 않는다.
     비용 항목마다 단위 1개당 금액 범위·통화·단위·근거를 넘긴다. 결과의 항목별·일자별 합계, 총액·1인당 금액,
     예산 판정을 그대로 사용하고, 예산 초과면 초과 금액과 조정안을 함께 안내한다.
@@ -676,14 +786,19 @@ def calculate_budget(items: list[BudgetItem], people: int, nights: int, runtime:
         budget: 사용자가 말한 예산 (없으면 비움. 예산은 가정하지 않는다). 금액은 display_currency 기준
         budget_basis: 예산 기준. total=일행 총액, per_person=1인 기준
         display_currency: 결과를 표시할 통화 (기본 KRW, 예산 통화와 같게)
+        adjustments: 예산 조정안 (바꿀 비용 항목과 새 금액). 절감액과 적용 후 판정은 이 도구가 다시 계산해 돌려준다
     """
     items = resolve_budget_sources(items, reference_index(runtime.state.get("messages", [])))
     try:
         result = compute_budget(items, people, nights, budget, budget_basis, display_currency)
+        text = render_budget(result)
+        if adjustments:
+            text += "\n" + render_adjustments(evaluate_adjustments(adjustments, items, people, nights, budget,
+                                                                   budget_basis, display_currency, result))
     except (BudgetError, ExchangeRateError) as e:
         logger.warning("예산 계산 실패", extra={"event": "budget_failed", "data": {"error": str(e)}})
         return f"예산 계산 실패: {e} 입력을 고쳐 다시 호출하세요. 금액을 직접 계산하지 마세요."
-    return render_budget(result)
+    return text
 
 
 # ---------- 날짜 계산 (SPEC 2.4): 상대 날짜·여행 기간을 파이썬으로 계산. 한 주는 월~일 ----------
@@ -707,6 +822,11 @@ def parse_date_text(text: str, today: date) -> date:
             return date(int(parts[0]), int(parts[1]), int(parts[2]))
         if len(parts) == 2:
             month, day = int(parts[0]), int(parts[1])
+            if (month, day) == (2, 29):  # 연도 없는 02-29는 오늘 이후 가장 가까운 윤년의 날짜 (S1-4: 평년에 DateError가 났다)
+                year = today.year
+                while not calendar.isleap(year) or date(year, 2, 29) < today:
+                    year += 1
+                return date(year, 2, 29)
             candidate = date(today.year, month, day)
             return candidate if candidate >= today else date(today.year + 1, month, day)
     except ValueError as e:
@@ -773,6 +893,47 @@ def render_dates(result: dict, today: date) -> str:
     return "\n".join(lines)
 
 
+# 상대 날짜 표현: 이 말이 있는 턴은 resolve_dates를 부르게 한다(S1-1: '담주 토욜'을 모델이 11/15(일)로 짐작했다).
+# '오늘·내일'은 시스템 프롬프트의 현재 날짜로 충분해 넣지 않는다.
+RELATIVE_DATE = re.compile(r"(?:다다음|다음|담|이번|저번|지난)\s*(?:주|달)|주말|[월화수목금토일](?:요일|욜)|모레|글피|"
+                           r"\d+\s*(?:일|주일?|달|개월)\s*(?:뒤|후)")
+
+# 답변 속 '날짜(요일)': 11/14(토), 2026-11-14(토), 11월 14일(토), 11월 14일 토요일
+_DATE_WITH_WEEKDAY = re.compile(
+    r"(?:(?P<y1>\d{4})[-./]\s*)?(?P<m1>\d{1,2})[/.-](?P<d1>\d{1,2})\s*\((?P<w1>[월화수목금토일])(?:요일)?\)"
+    r"|(?:(?P<y2>\d{4})년\s*)?(?P<m2>\d{1,2})월\s*(?P<d2>\d{1,2})일\s*(?:\((?P<w2>[월화수목금토일])(?:요일)?\)|(?P<w3>[월화수목금토일])요일)")
+WEEKDAY_FIX_PAST_DAYS = 60  # 연도 없는 날짜가 오늘보다 이만큼 넘게 지났으면 내년 날짜로 본다
+
+
+def fix_weekdays(text: str, today: date) -> tuple[str, list[str]]:
+    """글 속 '날짜(요일)'의 요일이 실제 달력과 다르면 파이썬 달력의 요일로 고친다. (고친 글, 고친 내역)을 돌려준다.
+    연도가 없으면 올해로 보되, 오늘보다 WEEKDAY_FIX_PAST_DAYS일 넘게 지난 날짜는 내년으로 본다. 없는 날짜는 건드리지 않는다. (S1-1)"""
+    fixed = []
+
+    def repl(m: re.Match) -> str:
+        n = "1" if m.group("m1") else "2"
+        month, day = int(m.group(f"m{n}")), int(m.group(f"d{n}"))
+        year_text = m.group(f"y{n}")
+        weekday = m.group("w1") or m.group("w2") or m.group("w3")
+        try:
+            year = int(year_text) if year_text else today.year
+            actual = date(year, month, day)
+            if not year_text and (today - actual).days > WEEKDAY_FIX_PAST_DAYS:
+                actual = date(year + 1, month, day)
+        except ValueError:
+            return m.group(0)
+        correct = WEEKDAYS_KO[actual.weekday()]
+        if correct == weekday:
+            return m.group(0)
+        fixed.append(f"{actual.isoformat()} {weekday}→{correct}")
+        # 요일 글자만 바꾼다(형식은 그대로)
+        start = m.start("w1") if m.group("w1") else m.start("w2") if m.group("w2") else m.start("w3")
+        offset = start - m.start()
+        return m.group(0)[:offset] + correct + m.group(0)[offset + 1:]
+
+    return _DATE_WITH_WEEKDAY.sub(repl, text or ""), fixed
+
+
 @tool
 def resolve_dates(weeks_from_now: int | None = None, weekday: str = "", days_from_today: int | None = None,
                   date: str = "", nights: int | None = None) -> str:
@@ -824,6 +985,8 @@ ASKED_MARKER = "[물어본 항목:"  # 다음 호출에서 '이미 물어본 항
 # 받은 항목은 2026-11-06 R5-1 추가(이전 대화의 표시에는 없을 수 있다)
 _ASKED_PATTERN = re.compile(r"\[물어본 항목: ([a-z_, ]*)(?: \| 받은 항목: ([a-z_, ]*))? \| 목적지: (.*)\]")
 KNOWN_BEFORE_TEXT = "앞서 말한 내용대로"  # 이전에 받은 항목을 모델이 이번 호출에서 빠뜨렸을 때의 확정 조건 문구
+# 당일치기·현지 일정은 출발지를 묻지 않는다(TASKS Phase 8 S4: '하루 코스 짜줘'에도 출발 공항을 되묻던 문제). 확정 조건에 이 문구를 넣는다.
+LOCAL_TRIP_TEXT = "출발지 이동 없음(당일·현지 일정: 항공·장거리 이동은 일정·예산에 넣지 않고, render_itinerary의 origin은 비움)"
 
 
 def provided_trip_items(destination: str, nights: int | None, people: int | None, origin: str,
@@ -836,9 +999,10 @@ def provided_trip_items(destination: str, nights: int | None, people: int | None
 
 
 def missing_trip_items(destination: str, nights: int | None, people: int | None, origin: str,
-                       budget: float | None, budget_basis: str, preferences: dict[str, str] | None = None) -> list[str]:
+                       budget: float | None, budget_basis: str, preferences: dict[str, str] | None = None,
+                       needs_origin: bool = True) -> list[str]:
     """일정에 필요한 항목 중 빠진 것을 순서대로 돌려준다. 예산 기준은 2명 이상이고 예산을 준 경우에만 필요하다.
-    preferences(취향 항목 → 값)를 주면 비어 있는 취향 항목도 뒤에 붙인다."""
+    preferences(취향 항목 → 값)를 주면 비어 있는 취향 항목도 뒤에 붙인다. needs_origin이 False(당일·현지 일정)면 출발지는 묻지 않는다."""
     missing = []
     if not destination.strip():
         missing.append("destination")
@@ -846,7 +1010,7 @@ def missing_trip_items(destination: str, nights: int | None, people: int | None,
         missing.append("nights")
     if people is None:
         missing.append("people")
-    if not origin.strip():
+    if needs_origin and not origin.strip():
         missing.append("origin")
     if budget is None:
         missing.append("budget")
@@ -884,11 +1048,12 @@ def asked_items_from_messages(messages, destination: str) -> tuple[set[str], set
 def evaluate_trip_info(destination: str, nights: int | None, people: int | None, origin: str,
                        budget: float | None, budget_basis: str, asked_before: set[str],
                        preferences: dict[str, str] | None = None, delegate_preferences: bool = False,
-                       known_before: set[str] | None = None) -> dict:
+                       known_before: set[str] | None = None, at_destination: bool = False) -> dict:
     """빠진 항목을 판정한다. 처음 빠진 항목은 되묻고(ask), 이미 물어봤는데도 빠진 항목은 가정을 적용한다.
     취향 항목도 같은 규칙(처음 한 번 묻고, 답이 없으면 가정)이며, 사용자가 맡겼으면(delegate_preferences) 묻지 않고 가정한다.
     known_before(이 대화에서 이미 받은 항목)는 이번 호출에서 빠져 있어도 묻지도 가정하지도 않고 '앞서 말한 내용대로'로 둔다
     (R5-1: 첫 호출에 '많이 걷기 싫다'를 여행 스타일로 받았는데, 답을 받은 뒤 다시 부를 때 모델이 빠뜨리자 새로 묻던 문제).
+    당일치기(nights=0)이거나 사용자가 이미 현지에 있으면(at_destination) 출발지는 필수가 아니다(묻지도 가정하지도 않음).
     결과: {"status": "ask"|"ready", "ask": [항목…], "assumed": {항목: 가정 문구}, "confirmed": {항목: 값 문구},
            "asked": 물어본 항목(누적), "known": 받은 항목(누적)}"""
     if people is not None and people < 1:
@@ -899,7 +1064,9 @@ def evaluate_trip_info(destination: str, nights: int | None, people: int | None,
     preferences = {p: (preferences or {}).get(p, "") or "" for p in PREFERENCE_ITEMS}
     if delegate_preferences:  # 취향을 맡긴 경우: 물어본 것과 같이 다룬다(가정으로 진행)
         asked_before = asked_before | set(PREFERENCE_ITEMS)
-    missing = missing_trip_items(destination, nights, people, origin, budget, budget_basis, preferences)
+    local_trip = nights == 0 or at_destination
+    missing = missing_trip_items(destination, nights, people, origin, budget, budget_basis, preferences,
+                                 needs_origin=not local_trip)
     carried = [m for m in missing if m in known_before]  # 전에 받은 값: 대화에 있으니 그대로 쓴다
     missing = [m for m in missing if m not in known_before]
     to_ask = [m for m in missing if m not in asked_before]
@@ -931,6 +1098,8 @@ def evaluate_trip_info(destination: str, nights: int | None, people: int | None,
         confirmed["people"] = f"인원 {people}명"
     if origin.strip():
         confirmed["origin"] = f"출발지 {origin.strip()}"
+    elif local_trip:
+        confirmed["origin"] = LOCAL_TRIP_TEXT
     if budget is not None:
         confirmed["budget"] = f"예산 {budget:,.0f}"
         if budget_basis:
@@ -981,7 +1150,7 @@ def render_trip_info(result: dict) -> str:
 def check_trip_info(runtime: ToolRuntime[Any], destination: str = "", nights: int | None = None,
                     people: int | None = None, origin: str = "", budget: float | None = None,
                     budget_basis: Literal["", "total", "per_person"] = "", must_visit: str = "", pace: str = "",
-                    interests: str = "", delegate_preferences: bool = False) -> str:
+                    interests: str = "", delegate_preferences: bool = False, at_destination: bool = False) -> str:
     """여행 일정을 만들기 전에 필요한 정보와 취향이 있는지 확인한다. 일정표 요청이면 일정을 만들기 전에 반드시 먼저 호출한다.
     대화에서 사용자가 말한 값만 넣고, 말하지 않은 항목은 인자 자체를 넣지 않는다(추측하거나 빈 문자열 ""로 채우지 않는다).
     결과가 [확인 필요]면 일정을 만들지 말고 물어볼 항목을 한 번에 묻는다. [확인 완료]면 그 조건으로 일정을 만들고,
@@ -998,6 +1167,7 @@ def check_trip_info(runtime: ToolRuntime[Any], destination: str = "", nights: in
         pace: 여행 스타일 (사용자가 말했거나 장기 기억에 있을 때만, 예: 여유롭게)
         interests: 관심사 (사용자가 말했거나 장기 기억에 있을 때만, 예: 맛집, 사찰)
         delegate_preferences: 사용자가 취향·세부 계획은 알아서 하라고 했으면 true ('나머지는 알아서 해줘' 등)
+        at_destination: 사용자가 이미 목적지에 있거나 그곳에 산다고 했으면 true (예: '지금 오사카인데', '부산 사는데 부산 하루 코스')
     """
     asked_before, known_before, awaiting = asked_items_from_messages(runtime.state.get("messages", []), destination)
     if awaiting:  # 묻기 전에 다시 부른 경우: 가정으로 넘어가지 않고 같은 확인 요청을 돌려준다.
@@ -1006,7 +1176,7 @@ def check_trip_info(runtime: ToolRuntime[Any], destination: str = "", nights: in
     try:
         result = evaluate_trip_info(destination, nights, people, origin, budget, budget_basis, asked_before,
                                     {"must_visit": must_visit, "pace": pace, "interests": interests},
-                                    delegate_preferences, known_before)
+                                    delegate_preferences, known_before, at_destination)
     except ValueError as e:
         return f"정보 확인 실패: {e} 값을 고쳐 다시 호출하세요."
     return render_trip_info(result)
@@ -1017,10 +1187,11 @@ _PRICE_NUM = r"\d(?:[\d,]*\d)?(?:\.\d+)?(?:\s*(?:만|천))?"  # 끝의 쉼표('$
 _PRICE_CUR = r"(?:원|엔|円|달러|유로|위안|바트|파운드|(?:KRW|JPY|USD|EUR|CNY|TWD|THB|VND|GBP|HKD|SGD)\b)"
 _PRICE_SYM = r"[¥￥₩$€£]"
 _RANGE_SEP = r"\s*[~～∼–-]\s*"
-PRICE_PATTERN = re.compile(  # 예: 600엔, 1,200円, 3만원대, ¥600, $20, 820 JPY, 1,000~2,000엔, ¥1,000~¥2,000 (이미 표시가 붙은 가격은 제외)
-    rf"(?:{_PRICE_SYM}\s*{_PRICE_NUM}(?:{_RANGE_SEP}{_PRICE_SYM}?\s*{_PRICE_NUM})?"
-    rf"|{_PRICE_NUM}(?:\s*{_PRICE_CUR})?{_RANGE_SEP}{_PRICE_NUM}\s*{_PRICE_CUR}"
-    rf"|{_PRICE_NUM}\s*{_PRICE_CUR})(?:대|선)?(?!\s*\(출처 없음)")
+# 가격 표현 하나. 예: 600엔, 1,200円, 3만원대, ¥600, $20, 820 JPY, 1,000~2,000엔, ¥1,000~¥2,000
+_PRICE_EXPR = (rf"(?:{_PRICE_SYM}\s*{_PRICE_NUM}(?:{_RANGE_SEP}{_PRICE_SYM}?\s*{_PRICE_NUM})?"
+               rf"|{_PRICE_NUM}(?:\s*{_PRICE_CUR})?{_RANGE_SEP}{_PRICE_NUM}\s*{_PRICE_CUR}"
+               rf"|{_PRICE_NUM}\s*{_PRICE_CUR})(?:대|선)?")
+PRICE_PATTERN = re.compile(_PRICE_EXPR + r"(?!\s*\(출처 없음)")  # 이미 표시가 붙은 가격은 제외
 
 # 통화 표기 → 통화 코드. 금액 대조는 통화가 같을 때만 한다(R1: '1,350엔'을 '1,350원'과 맞추지 않게).
 _CURRENCY_WORDS = {"원": "KRW", "₩": "KRW", "엔": "JPY", "円": "JPY", "¥": "JPY", "￥": "JPY", "달러": "USD", "$": "USD",
@@ -1078,6 +1249,65 @@ def label_unsourced_prices(text: str, sourced_text: str = "") -> tuple[str, int]
 
 
 _REFERENCE_BLOCK = re.compile(r'<reference [^>]*?title="([^"]*)" url="([^"]*)"[^>]*>(.*?)</reference>', re.DOTALL)
+
+
+# 외화 가격 뒤에 붙은 원화 환산: '1,200엔(약 11,000원)', '¥8,600 ≈ 78,000원', '1,000엔은 약 9,000원'
+_KRW_CONVERSION = re.compile(
+    rf"(?P<foreign>{_PRICE_EXPR})"
+    rf"(?P<sep>\s*[(（]\s*(?:약|대략|≈|~)?\s*|\s*(?:≈|=|→)\s*(?:약|대략)?\s*|\s*(?:은|는|이면|면)?\s*(?:한화|원화)?\s*(?:로)?\s*(?:약|대략)\s*)"
+    rf"(?P<krw>{_PRICE_EXPR})")
+
+
+def _krw_text(values: list[float]) -> str:
+    """원화 금액(들)을 '78,000원' / '66,300~80,200원'으로 쓴다. 만 원 이상은 100원, 그 아래는 10원 단위로 반올림."""
+    rounded = [round(v, -2 if v >= 10_000 else -1) for v in values]
+    if len(rounded) == 2 and rounded[0] != rounded[1]:
+        return f"{rounded[0]:,.0f}~{rounded[1]:,.0f}원"
+    return f"{rounded[0]:,.0f}원"
+
+
+def fix_krw_conversions(text: str, rate_fn: Callable[[str, str], tuple[float, int]] | None = None
+                        ) -> tuple[str, list[str], str]:
+    """답변 속 '외화 가격(약 ○○원)'의 원화 값을 실제 환율로 다시 계산해, 오차(KRW_CONVERSION_TOLERANCE)를 넘으면 바꾼다.
+    (고친 글, 고친 내역, 환율로 확인된 원화 금액 글)을 돌려준다. 확인된 금액 글은 가격 출처 표시에서 근거로 쓴다
+    (환율 도구 결과와 같은 근거라 '출처 없음'을 붙이지 않는다). 환율 조회에 실패하면 그대로 둔다. (TASKS Phase 8 S1-3)"""
+    rate_fn = rate_fn or get_rate
+    fixed, confirmed = [], []
+
+    def repl(m: re.Match) -> str:
+        values, currency = _price_amounts(m.group("foreign"))
+        krw_values, krw_currency = _price_amounts(m.group("krw"))
+        if not values or not krw_values or krw_currency != "KRW" or currency in ("", "KRW"):
+            return m.group(0)
+        try:
+            rate = rate_fn(currency, "KRW")[0]
+        except ExchangeRateError:
+            return m.group(0)
+        expected = [v * rate for v in values]
+        if len(expected) == len(krw_values) and all(
+                abs(k - e) <= config.KRW_CONVERSION_TOLERANCE * e for k, e in zip(krw_values, expected)):
+            confirmed.append(m.group("krw"))
+            return m.group(0)
+        new_krw = _krw_text(expected)
+        confirmed.append(new_krw)
+        fixed.append(f"{m.group('foreign')}: {m.group('krw')} → {new_krw}")
+        return m.group("foreign") + m.group("sep") + new_krw
+
+    text = _KRW_CONVERSION.sub(repl, text or "")
+    # 외화 옆에 붙지 않고 따로 쓴 원화 금액도, 답변 속 어떤 외화 금액을 환율로 계산한 값과 맞으면 확인된 금액으로 친다
+    expected = []
+    for value, currency in _source_prices(text):
+        if currency and currency != "KRW":
+            try:
+                expected.append(value * rate_fn(currency, "KRW")[0])
+            except ExchangeRateError:
+                continue
+    for m in PRICE_PATTERN.finditer(text):
+        values, currency = _price_amounts(m.group(0))
+        if currency == "KRW" and values and all(
+                any(abs(v - e) <= config.KRW_CONVERSION_TOLERANCE * e for e in expected) for v in values):
+            confirmed.append(m.group(0))
+    return text, fixed, "\n".join(confirmed)
 
 
 def annotate_answer_prices(text: str, tool_text: str) -> tuple[str, int, int]:
@@ -1236,7 +1466,8 @@ def quality_retries_used(messages: list) -> int:
 def build_itinerary_text(title: str, destination: str, nights: int, people: int, origin: str, days: list[DayPlan],
                          start_date: str = "", assumptions: list[str] | None = None, notes: list[str] | None = None,
                          extra_sources: list[str] | None = None, budget_result: dict | None = None,
-                         adjustments: list[str] | None = None, source_index: dict[str, SourceRef] | None = None) -> str:
+                         adjustments: list[str | tuple[str, str]] | None = None,
+                         source_index: dict[str, SourceRef] | None = None) -> str:
     """일정표 구조화 데이터를 검증하고 텍스트로 렌더링한다. 입력이 잘못되면 ValueError.
     출처는 출처 ID로 받아 source_index(대화 기록의 검색 결과)에서 제목·URL을 찾아 표시한다."""
     source_index = source_index or {}
@@ -1284,7 +1515,7 @@ def build_itinerary_text(title: str, destination: str, nights: int, people: int,
     if start:
         period += f" ({fmt_day(start)} ~ {fmt_day(start + timedelta(days=nights))})"
     lines.append(f"# {title}")
-    lines.append(f"{destination} · {period} · {people}명 · {origin} 출발")
+    lines.append(f"{destination} · {period} · {people}명" + (f" · {origin} 출발" if origin.strip() else ""))
     cur = budget_result["currency"] if budget_result else ""
     for d in sorted(days, key=lambda x: x.day):
         when = f" {fmt_day(start + timedelta(days=d.day - 1))}" if start else ""
@@ -1314,7 +1545,7 @@ def build_itinerary_text(title: str, destination: str, nights: int, people: int,
     if budget_result:
         lines += ["", "## 예산 요약", render_budget(budget_result, for_user=True)]
         if judgement and judgement["verdict"] == "over" and adjustments:  # 15% 이내 초과는 조정안 없이도 진행
-            lines += ["", "## 예산 조정안"] + [f"- {mark(a)}" for a in adjustments]
+            lines += ["", "## 예산 조정안"] + [f"- {adjustment_line(a, mark)}" for a in adjustments]
     for src in extra_sources or []:
         cite(src)
     if sources:
@@ -1416,7 +1647,7 @@ def render_itinerary(title: str, destination: str, nights: int, people: int, ori
                      notes: list[str] | None = None, extra_sources: list[str] | None = None,
                      budget_items: list[BudgetItem] | None = None, budget: float | None = None,
                      budget_basis: Literal["total", "per_person"] = "total",
-                     display_currency: str = config.BASE_CURRENCY, adjustments: list[str] | None = None):
+                     display_currency: str = config.BASE_CURRENCY, adjustments: list[BudgetAdjustment] | None = None):
     """완성한 여행 일정표를 구조화 데이터로 넘기면 검증·예산 계산·렌더링해 그대로 사용자에게 보여준다.
     일정표는 직접 글로 쓰지 말고 이 도구로만 보여준다. 결과가 그대로 최종 답변이 되므로, 호출 전에 검색·날짜·날씨 조회를 마친다.
     check_trip_info가 [확인 완료]일 때만 호출한다. 실패하면 오류 내용을 보고 고쳐서 다시 호출한다.
@@ -1426,7 +1657,7 @@ def render_itinerary(title: str, destination: str, nights: int, people: int, ori
         destination: 목적지
         nights: 박 수
         people: 인원 수
-        origin: 출발지
+        origin: 출발지 (check_trip_info가 '출발지 이동 없음'이면 빈 값 "")
         days: 1일차부터 마지막 일차까지의 일정. 각 일정에 장소·이동수단·소요시간·근거 출처(검색 결과 id)를 넣는다
         start_date: 출발일 YYYY-MM-DD (resolve_dates로 구한 값, 모르면 비움)
         assumptions: check_trip_info의 가정한 조건 목록
@@ -1436,7 +1667,8 @@ def render_itinerary(title: str, destination: str, nights: int, people: int, ori
         budget: 사용자가 말한 예산 (없으면 비움)
         budget_basis: 예산 기준 total=일행 총액, per_person=1인
         display_currency: 금액 표시 통화 (기본 KRW)
-        adjustments: 예산 초과일 때의 조정안 (숙박 등급·일정 조정 등). 초과인데 비어 있으면 오류로 돌아온다
+        adjustments: 예산 초과일 때의 조정안 (숙박 등급·일정 조정 등). 바꿀 비용 항목(budget_items의 name)과 새 금액을 넣으면
+            절감액·적용 후 판정을 프로그램이 계산해 붙인다. 초과 폭이 커서 조정안이 필요한데 비어 있으면 오류로 돌아온다
     """
     # 출처는 ID로만 받고 파이썬이 대화 기록의 검색 결과에서 제목·URL을 채운다(출력 토큰 감소, URL 베껴 쓰기 오류 방지)
     messages = runtime.state.get("messages", [])
@@ -1453,15 +1685,20 @@ def render_itinerary(title: str, destination: str, nights: int, people: int, ori
     try:
         budget_result = (compute_budget(budget_items, people, nights, budget, budget_basis, display_currency)
                          if budget_items else None)
+        adjustment_lines = (evaluate_adjustments(adjustments, budget_items, people, nights, budget, budget_basis,
+                                                 display_currency, budget_result)
+                            if adjustments and budget_result else [a.description for a in adjustments or []])
         text = build_itinerary_text(title, destination, nights, people, origin, days, start_date,
-                                    assumptions, notes, extra_sources, budget_result, adjustments, source_index)
+                                    assumptions, notes, extra_sources, budget_result, adjustment_lines, source_index)
     except (ValueError, BudgetError, ExchangeRateError) as e:
         logger.warning("일정표 렌더링 실패", extra={"event": "itinerary_failed", "data": {"error": str(e)}})
         raise ToolException(f"일정표 렌더링 실패: {e} 고쳐서 다시 호출하세요.") from e
     artifact = {
         "title": title, "destination": destination, "nights": nights, "people": people, "origin": origin,
         "start_date": start_date, "assumptions": assumptions or [], "notes": notes or [],
-        "adjustments": adjustments or [],
+        "adjustments": [a.description for a in adjustments or []],
+        # 화면용 조정안 줄(설명은 출처 없는 가격 표시, 계산 결과는 그대로). 다시 표시하지 않게 따로 둔다(S1-2)
+        "adjustment_lines": [adjustment_line(a) for a in adjustment_lines],
         "days": [d.model_dump() for d in days],
         "sources": {k: v.model_dump() for k, v in source_index.items()},  # days 안 출처 ID → 제목·URL
         "budget": None if not budget_result else {
@@ -1567,6 +1804,6 @@ def itinerary_view(artifact: dict, saved: dict[str, str] | None = None) -> dict 
             "nights": artifact.get("nights"), "people": artifact.get("people"), "origin": artifact.get("origin", ""),
             "start_date": fmt_day(start) if start else "", "assumptions": artifact.get("assumptions") or [],
             "notes": [label(n) for n in artifact.get("notes") or []],
-            "adjustments": [label(a) for a in artifact.get("adjustments") or []],
+            "adjustments": artifact.get("adjustment_lines") or [label(a) for a in artifact.get("adjustments") or []],
             "changes": artifact.get("changes") or [], "days": days, "budget": budget_view,
             "sources": list(used.values())}

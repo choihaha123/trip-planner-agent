@@ -4,7 +4,8 @@
 import unittest
 
 from src import config
-from src.tools import BudgetError, BudgetItem, compute_budget, judge_budget, render_budget, room_count
+from src.tools import (AdjustmentChange, BudgetAdjustment, BudgetError, BudgetItem, compute_budget,
+                       evaluate_adjustments, judge_budget, render_budget, room_count)
 
 
 def fixed_rate(from_currency: str, to_currency: str) -> tuple[float, int]:
@@ -122,6 +123,72 @@ class TestBudget(unittest.TestCase):
         pair = render_budget(compute_budget(lodging, people=2, nights=1, rate_fn=fixed_rate), for_user=True)
         self.assertNotIn("1실 기준", solo)
         self.assertIn(f"객실 1개({config.PEOPLE_PER_ROOM}인 1실 기준)", pair)
+
+
+
+class TestBudgetAdjustments(unittest.TestCase):
+    """예산 조정안은 프로그램이 다시 계산한 절감액·적용 후 판정으로만 보여 준다. (TASKS Phase 8 S1-2)
+    2명·2박3일·객실 1개, 예산 총액 900,000: 항공 600,000 + 숙박 360,000~520,000 = 최대 1,120,000 (220,000 초과, 24%)."""
+
+    def setUp(self):
+        """초과 폭이 15%를 넘어 조정안이 꼭 필요한 예산."""
+        self.items = [item("항공 왕복", 300_000, 300_000, "per_person", category="flight"),
+                      item("숙박", 180_000, 260_000, "per_room_per_night", category="lodging")]
+        self.base = compute_budget(self.items, 2, 2, budget=900_000)
+
+    def evaluate(self, adjustments):
+        """조정안을 다시 계산한다."""
+        return evaluate_adjustments(adjustments, self.items, 2, 2, 900_000, "total", "KRW", self.base)
+
+    def test_claim_replaced_by_recalculated_verdict(self):
+        """사례 1: 숙박 18~26만 → 18~20만이면 '예산 내 가능'이라고 써도, 실제로는 120,000만 줄어 초과가 남는다고 붙인다.
+        판정 단언은 설명에서 지우고, 바꾼 금액에는 출처 없음 표시를 붙인다."""
+        lines = self.evaluate([BudgetAdjustment(description="숙박을 18~20만원대로 조정하면 예산 내 가능",
+                                                changes=[AdjustmentChange(item="숙박", new_min_amount=180_000,
+                                                                          new_max_amount=200_000)])])
+        description, effect = lines[0]
+        self.assertEqual(description, "숙박 금액 조정")
+        self.assertIn(f"숙박 180,000~260,000 KRW → 180,000~200,000 KRW ({config.NO_SOURCE_LABEL})", effect)
+        self.assertIn("일행 총액 최대 120,000 KRW 절감(1인 60,000 KRW)", effect)
+        self.assertIn("적용 후 판정: 예산 초과 (최대 100,000 KRW 초과)", effect)
+        self.assertIn("적용 후 일행 총액 960,000~1,000,000 KRW", effect)
+
+    def test_combined_line(self):
+        """사례 2: 조정안이 둘 이상이면 '모두 적용하면' 줄로 합친 효과를 계산한다(합쳐도 초과면 초과)."""
+        lines = self.evaluate([
+            BudgetAdjustment(description="숙박을 비즈니스호텔로",
+                             changes=[AdjustmentChange(item="숙박", new_min_amount=150_000, new_max_amount=200_000)]),
+            BudgetAdjustment(description="저가 항공으로", changes=[AdjustmentChange(item="항공 왕복", new_min_amount=250_000,
+                                                                                new_max_amount=260_000)]),
+            BudgetAdjustment(description="걷기 위주 동선")])
+        self.assertEqual(lines[2], ("걷기 위주 동선", "금액 효과는 계산하지 않음"))
+        self.assertEqual(lines[3][0], "모두 적용하면")
+        self.assertIn("일행 총액 최대 200,000 KRW 절감", lines[3][1])              # 120,000 + 80,000
+        self.assertIn("적용 후 판정: 예산 근접", lines[3][1])                       # 920,000 ≤ 900,000×1.1
+
+    def test_invalid_adjustments(self):
+        """없는 항목 이름이나, 조정안이 꼭 필요한데 금액이 바뀌는 조정안이 없으면 오류로 돌려보낸다."""
+        with self.assertRaises(BudgetError):
+            self.evaluate([BudgetAdjustment(description="호텔 바꾸기",
+                                            changes=[AdjustmentChange(item="호텔", new_min_amount=1, new_max_amount=1)])])
+        with self.assertRaises(BudgetError):
+            self.evaluate([BudgetAdjustment(description="일정을 줄인다")])
+
+    def test_itinerary_shows_recalculated_lines(self):
+        """일정표·화면 카드의 조정안 줄은 '설명: 다시 계산한 결과'이고, 출처 없음 표시는 모델이 쓴 설명의 가격에만 붙는다."""
+        from src.tools import DayPlan, ScheduleItem, adjustment_line, build_itinerary_text, itinerary_view
+        lines = self.evaluate([BudgetAdjustment(description="숙박을 20만원 이하 호텔로",
+                                                changes=[AdjustmentChange(item="숙박", new_min_amount=180_000,
+                                                                          new_max_amount=200_000)])])
+        days = [DayPlan(day=d, items=[ScheduleItem(time="오전", place="오사카성")]) for d in (1, 2, 3)]
+        text = build_itinerary_text("오사카", "오사카", 2, 2, "인천", days, budget_result=self.base, adjustments=lines)
+        expected = (f"- 숙박을 20만원 ({config.NO_SOURCE_LABEL}) 이하 호텔로: 숙박 180,000~260,000 KRW → "
+                    f"180,000~200,000 KRW ({config.NO_SOURCE_LABEL}) → 일행 총액 최대 120,000 KRW 절감(1인 60,000 KRW), "
+                    "적용 후 일행 총액 960,000~1,000,000 KRW, 적용 후 판정: 예산 초과 (최대 100,000 KRW 초과)")
+        self.assertIn(expected, text)
+        artifact = {"days": [d.model_dump() for d in days], "adjustment_lines": [adjustment_line(a) for a in lines],
+                    "adjustments": ["숙박을 20만원 이하 호텔로"]}
+        self.assertEqual(itinerary_view(artifact)["adjustments"], [expected[2:]])
 
 
 if __name__ == "__main__":

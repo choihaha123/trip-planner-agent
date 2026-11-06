@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from langchain_core.messages import AIMessage
 from pydantic import BaseModel
 
 from main import error_message
@@ -143,9 +144,26 @@ def answer_view(message, messages: list) -> dict:
     return view
 
 
+def save_stop_notice(agent, config_: dict, base_count: int) -> None:
+    """멈춘 턴의 답변으로 멈춤 안내를 대화 기록에 남긴다. 새로고침해도 빈 말풍선 대신 이 안내가 보인다. (S4-5)
+    이번 사용자 메시지가 기록에 들어간 경우에만 남긴다. 결과 없는 도구 호출은 다음 턴에 보정된다(repair_orphan_tool_calls)."""
+    messages = (agent.get_state(config_).values or {}).get("messages", [])
+    if len(messages) > base_count:
+        agent.update_state(config_, {"messages": [AIMessage(content=runs.STOPPED_MESSAGE)]}, as_node="model")
+
+
+def is_answer(message) -> bool:
+    """화면에 답변으로 보여 줄 메시지인지: 도구를 부르지 않은 모델 답변, 또는 성공한 일정표(render_itinerary) 결과.
+    (S4-5: 멈춘 턴은 마지막 메시지가 도구 호출·도구 결과라 빈 말풍선이나 검색 결과가 답변처럼 보였다)"""
+    if isinstance(message, AIMessage):
+        return not message.tool_calls
+    return (getattr(message, "type", "") == "tool" and getattr(message, "name", "") == "render_itinerary"
+            and getattr(message, "status", "") != "error")
+
+
 def history_messages(messages: list) -> list[dict]:
-    """체크포인트 메시지를 화면용 [{role, content[, itinerary]}]으로 바꾼다. 턴마다 사용자 메시지와 그 턴의 마지막 메시지(최종 답변,
-    일정표면 render_itinerary 결과)만 보여 주고, 중간의 도구 호출·결과는 뺀다."""
+    """체크포인트 메시지를 화면용 [{role, content[, itinerary]}]으로 바꾼다. 턴마다 사용자 메시지와 그 턴의 마지막 답변(최종 답변,
+    일정표면 render_itinerary 결과)만 보여 주고, 중간의 도구 호출·결과는 뺀다. 답변이 없는 턴은 사용자 메시지만 보인다."""
     shown, turn_last = [], None
     for m in messages:
         if getattr(m, "type", "") == "human":
@@ -153,7 +171,7 @@ def history_messages(messages: list) -> list[dict]:
                 shown.append(answer_view(turn_last, messages))
             shown.append({"role": "user", "content": get_text(m)})
             turn_last = None
-        else:
+        elif is_answer(m):
             turn_last = m
     if turn_last is not None:
         shown.append(answer_view(turn_last, messages))
@@ -226,10 +244,8 @@ def thread_messages(thread_id: str, user: dict = Depends(current_user)) -> dict:
     agent, _ = get_agent()
     messages = (agent.get_state(run_config(thread_id, user["user_id"])).values or {}).get("messages", [])
     run = runs.get_run(thread_id)
-    if run is not None:
-        last_human = max((i for i, m in enumerate(messages) if getattr(m, "type", "") == "human"), default=-1)
-        if last_human >= 0 and get_text(messages[last_human]) == run.content:
-            messages = messages[:last_human + 1]
+    if run is not None and run.base_count is not None and len(messages) > run.base_count:
+        messages = messages[:run.base_count + 1]  # 시작 전 기록 + 이번 사용자 메시지까지 (S4-6)
     return {"thread": thread, "messages": history_messages(messages), "running": run is not None}
 
 
@@ -257,14 +273,19 @@ def send_message(thread_id: str, body: MessageIn, user: dict = Depends(current_u
             urls, _ = extract_urls(content)
             run.emit("progress", {"stage": f"링크 {len(urls)}개 확인 중" if urls else "질문 확인 중", "title": title})
             config_ = run_config(thread_id, user_id)
+            run.base_count = len((agent.get_state(config_).values or {}).get("messages", []))
+            if run.cancel.is_set():  # 실행 직전에 한 번 더 확인한다(S4-6)
+                run.emit("stopped", {"message": runs.STOPPED_MESSAGE, "title": title})
+                return
             writing = False  # 이번 모델 호출에서 글자를 보내기 시작했는지
+            stopped = False
             stream = agent.stream({"messages": [{"role": "user", "content": content}]}, config_,
                                   context=AgentContext(user_id=user_id, channel="web"), stream_mode=["updates", "messages"])
             try:
                 for mode, item in stream:
                     if run.cancel.is_set():
-                        run.emit("stopped", {"message": runs.STOPPED_MESSAGE, "title": title})
-                        return
+                        stopped = True
+                        break
                     if mode == "messages":
                         chunk, meta = item
                         text = draft_text(chunk) if meta.get("langgraph_node") == "model" else ""
@@ -283,13 +304,17 @@ def send_message(thread_id: str, body: MessageIn, user: dict = Depends(current_u
                             run.emit("progress", {"stage": stage})
             finally:
                 stream.close()  # 멈췄을 때 그래프 실행을 바로 정리한다
+            if stopped:
+                save_stop_notice(agent, config_, run.base_count)
+                run.emit("stopped", {"message": runs.STOPPED_MESSAGE, "title": title})
+                return
             messages = agent.get_state(config_).values["messages"]
             final = answer_view(messages[-1], messages)
             run.emit("done", {"answer": final["content"], "title": title,
                               **({"itinerary": final["itinerary"]} if "itinerary" in final else {})})
         except Exception as e:
             logger.exception("웹 답변 실패", extra={"event": "web_agent_error", "data": {"thread_id": thread_id}})
-            run.emit("error", {"message": error_message(e)})
+            run.emit("error", {"message": error_message(e, "web")})
 
     try:
         run = runs.start_run(thread_id, user_id, content, work)

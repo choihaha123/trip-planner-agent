@@ -42,6 +42,12 @@ BEDROCK_AGENT_MAX_RETRIES = int(os.getenv("BEDROCK_AGENT_MAX_RETRIES", "0"))  # 
 ITINERARY_MAX_SEARCH_ROUNDS = int(os.getenv("ITINERARY_MAX_SEARCH_ROUNDS", "2"))
 ITINERARY_MAX_ITEMS_PER_SOURCE = 3  # 일정표에서 출처 하나를 붙일 수 있는 최대 장소 수 (넘으면 구체성 검사에서 돌려보냄)
 ITINERARY_QUALITY_RETRIES = 1       # 구체성 검사(장소명·공항·출처 반복)로 돌려보내는 횟수(턴당). 넘으면 그대로 렌더링
+# 턴당 호출 상한 (TASKS Phase 8 S2). 2026-11-06: 이전 기록 368턴 측정(모델 호출 p99 23, 최대 41)으로 정함.
+# 모델 호출이 상한에 이르면 그 턴을 안내 문구로 끝낸다. 일정표 렌더링이 상한만큼 실패하면 더 시도하지 않고 글로 사유를 답한다.
+AGENT_MAX_MODEL_CALLS_PER_TURN = int(os.getenv("AGENT_MAX_MODEL_CALLS_PER_TURN", "25"))
+# 일정 요청 강제 판단에서 여행 신호를 찾을 직전 사용자 메시지 수(이번 메시지 제외). (TASKS Phase 8 S4)
+TRAVEL_CONTEXT_TURNS = 2
+ITINERARY_MAX_RENDER_ATTEMPTS = int(os.getenv("ITINERARY_MAX_RENDER_ATTEMPTS", "3"))
 
 # ---------- 사용자·대화 기록 (SPEC 1.3, 2.7) ----------
 DEFAULT_USER_ID = "default"
@@ -111,6 +117,7 @@ WEB_SEARCH_MAX_RESULTS = 5     # 웹 검색 결과 수 (Tavily 키는 .env 의 T
 NO_SOURCE_LABEL = "출처 없음, 사용자 확인 필요"  # URL 출처 없는 LLM 일반지식 표시 (SERVICE 2.6)
 HTTP_TIMEOUT_SECONDS = 10      # 날씨·환율 API 호출 타임아웃 (HTTP 클라이언트: httpx)
 EXCHANGE_CACHE_SECONDS = 3600  # 환율 캐시 유지 시간 (1시간)
+KRW_CONVERSION_TOLERANCE = 0.03  # 답변 속 '외화(약 ○○원)' 환산이 실제 환율 계산과 이 비율 넘게 다르면 고친다 (TASKS Phase 8 S1-3)
 # ---------- URL 수집 한계 (SERVICE 2.1, OPEN_ISSUES #3) ----------
 MAX_URLS_PER_MESSAGE = 5       # 한 메시지에서 수집할 최대 URL 수 (초과분은 건너뛰고 사용자에게 알림, URL은 동시 처리)
 COLLECT_TIMEOUT_SECONDS = 15   # 페이지 수집 전체 시간 한도(리다이렉트·본문 받기 포함)

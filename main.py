@@ -92,12 +92,21 @@ def forget_memory_command(user_id: str, arg: str) -> str:
     return f"'{MEMORY_FIELDS[field]}' 기억을 지웠습니다. 이제 답변에 쓰지 않습니다."
 
 
-def error_message(error: Exception) -> str:
+# 새 대화를 시작하는 방법(채널별). 웹에는 /new 명령이 없다(TASKS Phase 8 S4: 웹 오류 안내가 CLI 명령을 알려 주던 문제).
+NEW_CHAT_HINTS = {
+    "cli": "/new로 새 대화를 시작해 주세요",
+    "web": "'새 대화' 버튼으로 새 대화를 시작해 주세요",
+    "mcp": "conversation_id 없이 새 대화로 물어봐 주세요",
+}
+
+
+def error_message(error: Exception, channel: str = "cli") -> str:
     """답변 실패 시 사용자에게 보여 줄 안내를 원인별로 고른다. (SPEC 1.3)
-    기다리면 풀리는 경우(모델 한도 초과)에만 '잠시 후'를 안내하고, 그 밖에는 다시 보내거나 새 대화를 시작하도록 안내한다."""
+    기다리면 풀리는 경우(모델 한도 초과)에만 '잠시 후'를 안내하고, 그 밖에는 다시 보내거나 새 대화를 시작하도록 안내한다.
+    새 대화를 시작하는 방법은 채널(cli / web / mcp)에 맞춰 안내한다."""
     if is_throttled(error):
         return "지금 요청이 많아 답변하지 못했습니다. 잠시 후 같은 질문을 다시 보내 주세요."
-    return "답변 중 오류가 발생했습니다. 같은 질문을 다시 보내 보시고, 계속 안 되면 /new로 새 대화를 시작해 주세요."
+    return f"답변 중 오류가 발생했습니다. 같은 질문을 다시 보내 보시고, 계속 안 되면 {NEW_CHAT_HINTS[channel]}."
 
 
 def saved_command(user_id: str) -> str:
