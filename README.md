@@ -100,6 +100,18 @@ uvicorn src.web.app:app       # 프로젝트 루트에서. 브라우저로 http:
 - 위쪽 **기억** 버튼: 기억한 이름·여행 선호·답변 스타일을 보고 항목별로 지웁니다.
 - 대화 기록·저장한 링크·기억은 CLI와 같은 저장소를 쓰지만, 웹 계정의 사용자 ID는 내부 ID(`u_…`)라 CLI의 `--user` 이름과는 따로입니다. 설정값(`WEB_DB`, `WEB_SESSION_DAYS`, HTTPS 배포 시 `WEB_COOKIE_SECURE=true` 등)은 `.env.example`을 참고합니다.
 
+**화면 예시**
+<table>
+  <tr>
+    <td width="50%"><img src="data/web_screenshot/2.png" alt="첫 화면"><br><sub>첫 화면: 대화 목록과 예시 질문</sub></td>
+    <td width="50%"><img src="data/web_screenshot/5.png" alt="일정표 카드"><br><sub>일정표 카드: 바뀐 점·일차 탭·타임라인·요금과 출처 표시</sub></td>
+  </tr>
+  <tr>
+    <td><img src="data/web_screenshot/3.png" alt="링크 확인 중"><br><sub>링크와 함께 질문: 진행 단계 표시, 답변 중에는 '중지' 버튼</sub></td>
+    <td><img src="data/web_screenshot/4.png" alt="저장한 링크 패널"><br><sub>답변 글자 스트리밍과 '저장한 링크' 패널</sub></td>
+  </tr>
+</table>
+
 ### 7-2) Claude Desktop에서 쓰기 (MCP 서버)
 이 에이전트를 **MCP 서버**로 띄워 Claude Desktop 같은 MCP 클라이언트에서 쓸 수 있습니다. 서버는 **각자 자기 PC에서** 실행합니다(Claude Desktop이 자식 프로세스로 띄우는 stdio 방식).
 
